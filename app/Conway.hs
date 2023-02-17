@@ -1,11 +1,5 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, ExistentialQuantification #-}
-{-
- - Someday it will make sense to replace these simpler definitions with the
- - more sophisticated ones in the "Sheet" module.
- -}
-
 module Conway where
-
 -- base
 import Prelude hiding (drop, head, repeat, take, zipWith)
 import qualified Prelude as P
