@@ -6,9 +6,8 @@
 
 # why
 
-
 This is an excuse for the author to experiment with reactive UI patterns and
-types first, and mildly interesting game of life viewer / editor secondarily.
+types first, and a mildly interesting game of life viewer / editor second.
 Inspired by the work of [Arthur Xavier][xavierpdf] and
 [Phil Freeman][freemanpdf].
 
@@ -32,8 +31,6 @@ This project uses [Cabal 3.x][cabal].
 
 There is an external dependency on [my bindings to termbox2][tb2hs] which is
 included as a submodule for your convenience.
-
-Golem uses [Cabal][cabal] for project management.
 
 # issues / concerns / merge requests
 
