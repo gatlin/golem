@@ -151,19 +151,19 @@ instance Applicative Sheet where
 
 -- | Move the focus of a 'Sheet' up
 up :: Sheet a -> Sheet a
-up (Sheet t) = Sheet (tapeL t)
+up (Sheet t) = Sheet (t & tapeL)
 
 -- | Move the focus of a 'Sheet' down
 down :: Sheet a -> Sheet a
-down (Sheet t) = Sheet (tapeR t)
+down (Sheet t) = Sheet (t & tapeR)
 
 -- | Move the focus of a 'Sheet' left
 left :: Sheet a -> Sheet a
-left (Sheet tt) = Sheet (fmap tapeL tt)
+left (Sheet tt) = Sheet (tt <&> tapeL)
 
 -- | Move the focus of a 'Sheet' right
 right :: Sheet a -> Sheet a
-right (Sheet tt) = Sheet (fmap tapeR tt)
+right (Sheet tt) = Sheet (tt <&> tapeR)
 
 -- | Generalization of 'shift' for the horizontal dimension.
 horizontal :: Sheet a -> Tape (Sheet a)
@@ -197,10 +197,9 @@ cardinality = length . filter (== X)
 
 -- | Extract the neighbors of a 'Sheet' focus (a sub-'Sheet')
 neighbors :: [Sheet a -> Sheet a]
-neighbors =
-  horiz ++ vert ++ liftM2 (.) horiz vert where
-    horiz   = [ left, right ]
-    vert    = [ up, down ]
+neighbors = horiz ++ vert ++ liftM2 (.) horiz vert where
+  horiz   = [ left, right ]
+  vert    = [ up, down ]
 
 aliveNeighbors :: Sheet Cell -> Int
 aliveNeighbors z = neighbors <&> (\dir -> z & dir & extract) & cardinality
