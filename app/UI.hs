@@ -94,11 +94,11 @@ runUI (UI tb2) = Tb2.runTermbox2 tb2
 -- | A console view
 data Console =
   Console
-    (UI ())       -- ^ Renders output when called.
+    (UI ())                 -- ^ Renders output when called.
     (Tb2.Tb2Event -> IO ()) -- ^ Awaits incoming events.
 
 -- | Legible alias for a common component type.
-type Screen m w = Component m w (Action w) Console
+type Screen w m = Component m w (Action w) Console
 
 -- | Construct a screen component with a given behavior.
 screen
@@ -106,7 +106,7 @@ screen
   => w a
   -> (a -> UI ())                             -- ^ render
   -> (a -> Tb2.Tb2Event -> IO (Action w ()))  -- ^ update
-  -> Screen IO w
+  -> Screen w IO
 screen c r u = c =>> \this emit ->
   let value = extract this
   in  Console (r value) (emit . u value)

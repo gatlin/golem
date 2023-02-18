@@ -19,7 +19,7 @@ next = UI.Action $ \values -> extract (C.drop 1 values) ()
 -- | A terminal UI component with behavior defined by a 'C.Stream Pattern'.
 -- Advances a Conway Game of Life cellular automaton one step for each press of
 -- the space bar.
-app :: Pattern -> UI.Screen IO C.Stream
+app :: Pattern -> UI.Screen C.Stream IO
 app start = UI.screen (C.animate start) render update where
 
   render :: Pattern -> UI.UI ()
