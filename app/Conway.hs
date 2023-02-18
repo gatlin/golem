@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, ExistentialQuantification #-}
 module Conway where
 -- base
-import Prelude hiding (drop, head, repeat, take, zipWith)
+import Prelude hiding (drop, head, repeat, take, zipWith, lines)
 import qualified Prelude as P
 import Data.Function ((&))
 import Data.Functor ((<&>))
@@ -27,7 +27,7 @@ instance Applicative Stream where
 
 instance Comonad Stream where
   extract = head
-  duplicate s@(Cons x xs) = Cons s (duplicate xs)
+  duplicate s@(Cons _ xs) = Cons s (duplicate xs)
 
 instance ComonadApply Stream where
   (<@>) = (<*>)

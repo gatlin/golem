@@ -25,8 +25,8 @@ This project uses [Cabal 3.x][cabal].
 > git clone https://github.com/gatlin/golem
 > cd golem
 > git submodule update --init
-> cabal install
-> cabal run
+> cabal configure
+> cabal run golem -- examples/pulsar.golem # or examples/glider.golem
 ```
 
 There is an external dependency on [my bindings to termbox2][tb2hs] which is

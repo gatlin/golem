@@ -72,6 +72,9 @@ executable golem
                       comonad,
                       free,
                       mtl,
+                      resourcet,
+                      streaming,
+                      streaming-bytestring,
                       termbox2-hs
 
     -- Directories containing source files.

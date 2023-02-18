@@ -5,7 +5,7 @@ import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Control.Monad (forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (ord)
-import Control.Comonad (Comonad(..) , ComonadApply(..), (=>>))
+import Control.Comonad (Comonad(..), (=>>))
 import Control.Comonad.Cofree (ComonadCofree(unwrap), Cofree, coiter)
 import qualified Termbox2 as Tb2
 
@@ -17,9 +17,6 @@ class (Functor f, Functor g) => Run f g where
 
 move :: (Comonad w, Run m w) => w a -> m b -> (b, w a)
 move space action = run (,) action (duplicate space)
-
-perform :: (Run m w) => m a -> w b -> a
-perform = run const
 
 -- | credit: Ed Kmett calls this 'Co'.
 newtype Action space a = Action {
@@ -37,15 +34,15 @@ instance (Functor space) => Run (Action space) space where
   run f action space = step action $ fmap (flip f) space
 
 type Dispatcher base action = base (action ()) -> base ()
-type UI base action view = Dispatcher base action -> view
-type Component base space action view = space (UI base action view)
+type Interface base action view = Dispatcher base action -> view
+type Component base space action view = space (Interface base action view)
 
 -- | 'Cofree' does exactly what we want but has an unintuitive name.
-type Space = Cofree
+type Behavior = Cofree
 
 -- | 'coiter' does exactly what we want but has an unintuitive name.
-space :: Functor f => (a -> f a) -> a -> Space f a
-space = coiter
+behavior :: Functor f => (a -> f a) -> a -> Behavior f a
+behavior = coiter
 
 -- | Re-exported from @free@ (no name change this time).
 unwrap :: ComonadCofree f w => w a -> f (w a)
