@@ -22,9 +22,9 @@ app start = UI.screen (C.animate start) render update where
     UI.screenBorder 0
     w <- width
     h <- height
-    let lines = C.sheetView (h-2) (w-2) frame
-    forM_ (zip [1..] lines) $ \(y, line) ->
-      forM_ (zip [1..] line) $ \(x, cell) ->
+    let rows = C.sheetView (h-2) (w-2) frame
+    forM_ (zip [1..] rows) $ \(y, row) ->
+      forM_ (zip [1..] row) $ \(x, cell) ->
         when (cell == X) $ UI.drawBlock x y
 
   update :: Frame -> Tb2Event -> IO (UI.Action C.Stream ())
