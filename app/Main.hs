@@ -4,7 +4,7 @@ import System.Environment (getArgs)
 import System.IO (readFile)
 import Control.Monad (forM_, when)
 import Control.Comonad (Comonad(extract))
-import Termbox2 (Termbox2, Tb2Event(_ch), width, height)
+import Termbox2 (Tb2Event(_ch))
 import Conway (Cell(X), Cell(O))
 import qualified Conway as C
 import qualified UI
@@ -22,11 +22,11 @@ next = UI.Action $ \values -> extract (C.drop 1 values) ()
 app :: Pattern -> UI.Screen IO C.Stream
 app start = UI.screen (C.animate start) render update where
 
-  render :: Pattern -> Termbox2 ()
+  render :: Pattern -> UI.UI ()
   render pattern = do
     UI.screenBorder 0
-    w <- width
-    h <- height
+    w <- UI.width
+    h <- UI.height
     let rows = C.sheetView (h-2) (w-2) pattern
     forM_ (zip [1..] rows) $ \(y, row) ->
       forM_ (zip [1..] row) $ \(x, cell) ->
