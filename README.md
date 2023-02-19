@@ -2,7 +2,7 @@
 
 [WIP] Yet another **G**ame **o**f **L**ife **em**ulator.
 
-🚨🚨🚨 Not done but has parts worth sharing! 🚨🚨🚨
+🚨 Not done but has parts worth sharing! 🚨
 
 # why
 
@@ -11,11 +11,10 @@ types first, and a mildly interesting game of life viewer / editor second.
 Inspired by the work of [Arthur Xavier][xavierpdf] and
 [Phil Freeman][freemanpdf].
 
-Specifically, the *logic* of an application can be thought of as a **space**
+Specifically, the *behavior* of an application can be thought of as a **space**
 exposing certain capabilities or resources; when this space is a *comonad*
 then one may automatically define a language of valid **actions** to *move
 around* the space.
-
 
 # building
 

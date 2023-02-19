@@ -32,7 +32,7 @@ counter = behavior $ \n -> Counter (n+1)
 -- keep track of them.
 type App = Day C.Stream Counter
 
--- | A terminal UI component with behavior defined by a 'C.Stream C.Pattern'.
+-- | A terminal UI component with behavior defined by 'App'.
 -- Advances a Conway Game of Life cellular automaton one step for each press of
 -- the space bar.
 app :: C.Pattern -> Screen App IO
