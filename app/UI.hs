@@ -15,7 +15,7 @@ module UI
   , Control.Comonad.Cofree.unwrap
   , Screen
   , screen
-  , Day(..)
+  , And(..)
   , (<->)
   -- Drawing utilities
   , glyphCode
@@ -147,21 +147,21 @@ mount component = do
     Right _ -> return ()
 
 -- | A Day convolution can combine two comonad behaviors into one.
-data Day f g a = forall x y. Day (x -> y -> a) (f x) (g y)
+data And f g a = forall x y. And (x -> y -> a) (f x) (g y)
 
-(<->) :: f x -> g y -> UI.Day f g (x, y)
-(<->) = UI.Day (,)
+(<->) :: f x -> g y -> And f g (x, y)
+(<->) = UI.And (,)
 
-instance Functor (Day f g) where
-  fmap g (Day f x y) = Day (\a b -> g (f a b)) x y
+instance Functor (And f g) where
+  fmap g (And f x y) = And (\a b -> g (f a b)) x y
 
-instance (Comonad f, Comonad g) => Comonad (Day f g) where
-  extract (Day f x y) = f (extract x) (extract y)
-  duplicate (Day f x y) = Day (Day f) (duplicate x) (duplicate y)
+instance (Comonad f, Comonad g) => Comonad (And f g) where
+  extract (And f x y) = f (extract x) (extract y)
+  duplicate (And f x y) = And (And f) (duplicate x) (duplicate y)
 
-instance (ComonadApply f, ComonadApply g) => ComonadApply (Day f g) where
-  Day u fa fb <@> Day v gc gd =
-    Day
+instance (ComonadApply f, ComonadApply g) => ComonadApply (And f g) where
+  And u fa fb <@> And v gc gd =
+    And
       (\(a,c) (b, d) -> u a b (v c d))
       ((,) <$> fa <@> gc)
       ((,) <$> fb <@> gd)
