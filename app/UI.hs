@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ExistentialQuantification #-}
 
 module UI
   (
@@ -14,6 +15,8 @@ module UI
   , Control.Comonad.Cofree.unwrap
   , Screen
   , screen
+  , Day(..)
+  , (<->)
   -- Drawing utilities
   , glyphCode
   , blockGlyph
@@ -21,6 +24,7 @@ module UI
   , drawRect
   , screenBorder
   , centerText
+  , statusText
   , width
   , height
   -- Remainder
@@ -37,7 +41,7 @@ import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Control.Monad (forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (ord)
-import Control.Comonad (Comonad(..), (=>>))
+import Control.Comonad (Comonad(..), ComonadApply(..), (=>>))
 import Control.Comonad.Cofree (ComonadCofree(unwrap), Cofree, coiter)
 import qualified Termbox2 as Tb2
 
@@ -142,6 +146,26 @@ mount component = do
     Left err -> putStrLn $ concat [ "Error: ", show err ]
     Right _ -> return ()
 
+-- | A Day convolution can combine two comonad behaviors into one.
+data Day f g a = forall x y. Day (x -> y -> a) (f x) (g y)
+
+(<->) :: f x -> g y -> UI.Day f g (x, y)
+(<->) = UI.Day (,)
+
+instance Functor (Day f g) where
+  fmap g (Day f x y) = Day (\a b -> g (f a b)) x y
+
+instance (Comonad f, Comonad g) => Comonad (Day f g) where
+  extract (Day f x y) = f (extract x) (extract y)
+  duplicate (Day f x y) = Day (Day f) (duplicate x) (duplicate y)
+
+instance (ComonadApply f, ComonadApply g) => ComonadApply (Day f g) where
+  Day u fa fb <@> Day v gc gd =
+    Day
+      (\(a,c) (b, d) -> u a b (v c d))
+      ((,) <$> fa <@> gc)
+      ((,) <$> fb <@> gd)
+
 -- = Part 3: Drawing utilities.
 
 glyphCode :: Integral n => Char -> n
@@ -173,7 +197,7 @@ screenBorder :: Int -> UI ()
 screenBorder border = do
   w <- width
   h <- height
-  drawRect border border (w-2*border) (h-2*border)
+  drawRect border border (w-border) (h-border)
 
 centerText :: String -> UI ()
 centerText msg = UI $ do
@@ -184,6 +208,14 @@ centerText msg = UI $ do
   let fgAttrs = Tb2.colorGreen <> Tb2.attrUnderline <> Tb2.attrBold
   let bgAttrs = Tb2.colorMagenta
   Tb2.print cx cy fgAttrs bgAttrs msg
+
+statusText :: String -> UI ()
+statusText msg = UI $ do
+  w <- Tb2.width
+  h <- Tb2.height
+  let cx = w - (length msg) - 2
+  let cy = h - 2
+  Tb2.print cx cy Tb2.colorGreen Tb2.colorDefault msg
 
 width, height :: UI Int
 width = UI Tb2.width

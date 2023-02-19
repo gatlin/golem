@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveFunctor #-}
 module Main (main) where
 
 import System.Environment (getArgs)
@@ -7,24 +8,49 @@ import Control.Comonad (Comonad(extract))
 import Termbox2 (Tb2Event(_ch))
 import Conway (Cell(X), Cell(O))
 import qualified Conway as C
+import UI
+  ( UI
+  , (<->)
+  , Action(..)
+  , nil
+  , BehaviorOf
+  , Day(..)
+  , behavior
+  , unwrap
+  , screen
+  , Screen
+  )
 import qualified UI
 
--- | Intuitively this is a 2D grid of cells, alive ('X') or dead ('O').
-type Pattern = C.Sheet Cell
+data CounterApi k = Counter { _tick :: k } deriving (Functor)
+type Counter = BehaviorOf CounterApi
 
--- | For any @t@, advances a 'C.Stream t' to its next value.
-next :: UI.Action C.Stream ()
-next = UI.Action $ \values -> extract (C.drop 1 values) ()
+counter :: Int -> Counter Int
+counter = behavior $ \n -> Counter (n+1)
 
--- | A terminal UI component with behavior defined by a 'C.Stream Pattern'.
+-- | Our application consists of a stream of frames to render and a counter to
+-- keep track of them.
+type App = Day C.Stream Counter
+
+-- | Advance the stream to the next frame.
+next :: Action App ()
+next = Action $ \(Day f s c) -> extract (Day f (C.drop 1 s) c) ()
+
+-- | Increment the frame counter.
+tick :: Action App ()
+tick = Action $ \(Day f s c) ->
+  extract (Day f s (_tick (unwrap c))) ()
+
+-- | A terminal UI component with behavior defined by a 'C.Stream C.Pattern'.
 -- Advances a Conway Game of Life cellular automaton one step for each press of
 -- the space bar.
-app :: Pattern -> UI.Screen C.Stream IO
-app start = UI.screen (C.animate start) render update where
+app :: C.Pattern -> Screen App IO
+app start = screen ((C.animate start) <-> (counter 1)) render update where
 
-  render :: Pattern -> UI.UI ()
-  render pattern = do
+  render :: (C.Pattern, Int) -> UI ()
+  render (pattern, frameNumber) = do
     UI.screenBorder 0
+    UI.statusText $ concat [ "Frame: ", show frameNumber ]
     w <- UI.width
     h <- UI.height
     let rows = C.sheetView (h-2) (w-2) pattern
@@ -32,11 +58,14 @@ app start = UI.screen (C.animate start) render update where
       forM_ (zip [1..] row) $ \(x, cell) ->
         when (cell == X) $ UI.drawBlock x y
 
-  update :: Pattern -> Tb2Event -> IO (UI.Action C.Stream ())
-  update _ et = return $ if (_ch et == UI.glyphCode ' ') then next else UI.nil
+  update :: (C.Pattern, Int) -> Tb2Event -> IO (Action App ())
+  update _ et = return $
+    if (_ch et == UI.glyphCode ' ')
+      then (tick >> next)
+      else nil
 
--- | Load a 'Pattern' from a given file path (or exit gracelessly).
-patternFromFile :: String -> IO Pattern
+-- | Load a 'C.Pattern' from a given file path (or exit gracelessly).
+patternFromFile :: String -> IO C.Pattern
 patternFromFile path = do
   contents <- readFile path
   return $ C.makeSheet O $ fmap (fmap xform) (lines contents)

@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, ExistentialQuantification #-}
+{-# LANGUAGE DeriveAnyClass #-}
 module Conway where
 -- base
 import Prelude hiding (drop, head, repeat, take, zipWith, lines)
@@ -212,4 +213,7 @@ conway z = case aliveNeighbors z of
 
 animate :: Sheet Cell -> Stream (Sheet Cell)
 animate = unfold $ \g -> (g, g =>> conway)
+
+-- | Intuitively this is a 2D grid of cells, alive ('X') or dead ('O').
+type Pattern = Sheet Cell
 
