@@ -32,15 +32,6 @@ counter = behavior $ \n -> Counter (n+1)
 -- keep track of them.
 type App = Day C.Stream Counter
 
--- | Advance the stream to the next frame.
-next :: Action App ()
-next = Action $ \(Day f s c) -> extract (Day f (C.drop 1 s) c) ()
-
--- | Increment the frame counter.
-tick :: Action App ()
-tick = Action $ \(Day f s c) ->
-  extract (Day f s (_tick (unwrap c))) ()
-
 -- | A terminal UI component with behavior defined by a 'C.Stream C.Pattern'.
 -- Advances a Conway Game of Life cellular automaton one step for each press of
 -- the space bar.
@@ -61,8 +52,14 @@ app start = screen ((C.animate start) <-> (counter 1)) render update where
   update :: (C.Pattern, Int) -> Tb2Event -> IO (Action App ())
   update _ et = return $
     if (_ch et == UI.glyphCode ' ')
-      then (tick >> next)
+      then (tick >> nextFrame)
       else nil
+
+  nextFrame :: Action App ()
+  nextFrame = Action $ \(Day f s c) -> extract (Day f (C.drop 1 s) c) ()
+
+  tick :: Action App ()
+  tick = Action $ \(Day f s c) -> extract (Day f s (_tick (unwrap c))) ()
 
 -- | Load a 'C.Pattern' from a given file path (or exit gracelessly).
 patternFromFile :: String -> IO C.Pattern
