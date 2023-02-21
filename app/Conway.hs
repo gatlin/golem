@@ -190,11 +190,12 @@ makeSheet background list = Sheet $ Tape (pure fz) r (fromList rs) where
 -- = Space
 -- Inward and outward are left and right on the outer tape, resp.
 -- Up and down are as with 'Sheet'.
+-- Not used yet, stay tuned.
 newtype Space a = Space (Tape (Tape (Tape a))) deriving (Functor, Show)
 
 instance Comonad Space where
   extract (Space s) = extract $ extract $ extract s
-  duplicate = Space . fmap (fmap wahC . wahB) . wahA
+  duplicate = Space . fmap (fmap lateral . medial) . radial
 
 left', right', up', down', inward, outward :: Space a -> Space a
 left' (Space ttt) = Space (ttt <&> (<&> tapeL))
@@ -204,10 +205,10 @@ down' (Space tt) = Space (tt <&> tapeR)
 inward (Space t) = Space (t & tapeL)
 outward (Space t) = Space (t & tapeR)
 
-wahA, wahB, wahC :: Space a -> Tape (Space a)
-wahA = shift inward outward
-wahB = shift up' down'
-wahC = shift left' right'
+radial, medial, lateral:: Space a -> Tape (Space a)
+radial = shift inward outward
+medial = shift up' down'
+lateral = shift left' right'
 
 -- = Cellular Automata code
 
