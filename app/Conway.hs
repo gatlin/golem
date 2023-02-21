@@ -10,7 +10,7 @@ import Control.Monad (liftM2)
 -- comonad
 import Control.Comonad ( Comonad(..), ComonadApply(..), (=>>))
 
--- * Streams
+-- = Streams
 
 -- | The following 'Stream' type is inlined from
 --
@@ -49,7 +49,7 @@ repeat x = Cons x (repeat x)
 take :: Int -> Stream a  -> [a]
 take n ~(Cons x xs)
   | n == 0    = []
-  | n > 0     =  x : (take (n - 1) xs)
+  | n > 0     =  x : take (n - 1) xs
   | otherwise = error "Stream.take: negative argument."
 
 drop :: Int -> Stream a -> Stream a
@@ -69,7 +69,7 @@ unfold f c =
 zipWith :: (a -> b -> c) -> Stream a -> Stream b -> Stream c
 zipWith f ~(Cons x xs) ~(Cons y ys) = Cons (f x y) (zipWith f xs ys)
 
--- * Tapes
+-- = Tapes
 
 -- | A one-dimensional Stream zipper
 data Tape a = Tape
@@ -96,7 +96,7 @@ instance ComonadApply Tape where
 -- | Extract a finite portion of a 'Tape', with the focus on the left.
 tapeView :: Int -> Tape a -> [a]
 tapeView 0 _ = []
-tapeView n (Tape _ x rs) = [x] ++ take (n - 1) rs
+tapeView n (Tape _ x rs) = x : take (n - 1) rs
 
 -- | Move a 'Tape' focus to the left.
 tapeL :: Tape a -> Tape a
@@ -132,11 +132,11 @@ tapeFromPattern ptn = Tape lhs c rhs where
   Cons _ lhs = fromList (P.concat (P.repeat (reverse ptn)))
   Cons c rhs = fromList (P.concat (P.repeat ptn))
 
--- * Sheets
+-- = Sheets
 
 -- | A two-dimensional 'Tape'.
 -- Up and down are left and right on the outer tape, respectively.
-data Sheet a = Sheet (Tape (Tape a))
+newtype Sheet a = Sheet (Tape (Tape a))
   deriving (Functor, Show)
 
 instance Comonad Sheet where
@@ -144,7 +144,8 @@ instance Comonad Sheet where
   duplicate = Sheet . fmap horizontal . vertical
 
 instance ComonadApply Sheet where
-  (Sheet f) <@> (Sheet a) = Sheet ((<@>) <$> f <@> a)
+  --(Sheet f) <@> (Sheet a) = Sheet ((<@>) <$> f <@> a)
+  (Sheet f) <@> (Sheet a) = Sheet (fmap (<@>) f <@> a)
 
 instance Applicative Sheet where
   (<*>) = (<@>)
@@ -178,9 +179,6 @@ vertical = shift up down
 sheetView :: Int -> Int -> Sheet a -> [[a]]
 sheetView rows cols (Sheet sh) = sh <&> tapeView cols & tapeView rows
 
-printSheet :: (Foldable f, Show a) => f a -> IO ()
-printSheet = mapM_ (putStrLn . show)
-
 makeSheet :: a -> [[a]] -> Sheet a
 makeSheet background list = Sheet $ Tape (pure fz) r (fromList rs) where
   (r:rs) = (map line list) ++ (toList (pure fz))
@@ -189,7 +187,29 @@ makeSheet background list = Sheet $ Tape (pure fz) r (fromList rs) where
   fz = pure background
   line (l:ls) = Tape ds l (fromList (ls ++ dl))
 
--- * Cellular Automata code
+-- = Space
+-- Inward and outward are left and right on the outer tape, resp.
+-- Up and down are as with 'Sheet'.
+newtype Space a = Space (Tape (Tape (Tape a))) deriving (Functor, Show)
+
+instance Comonad Space where
+  extract (Space s) = extract $ extract $ extract s
+  duplicate = Space . fmap (fmap wahC . wahB) . wahA
+
+left', right', up', down', inward, outward :: Space a -> Space a
+left' (Space ttt) = Space (ttt <&> (<&> tapeL))
+right' (Space ttt) = Space (ttt <&> (<&> tapeR))
+up' (Space tt) = Space (tt <&> tapeL)
+down' (Space tt) = Space (tt <&> tapeR)
+inward (Space t) = Space (t & tapeL)
+outward (Space t) = Space (t & tapeR)
+
+wahA, wahB, wahC :: Space a -> Tape (Space a)
+wahA = shift inward outward
+wahB = shift up' down'
+wahC = shift left' right'
+
+-- = Cellular Automata code
 
 data Cell = X | O deriving (Eq, Show)
 

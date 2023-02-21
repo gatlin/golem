@@ -1,8 +1,8 @@
 {-# LANGUAGE DeriveFunctor, TypeOperators #-}
+
 module Main (main) where
 
 import System.Environment (getArgs)
-import System.IO (readFile)
 import Control.Monad (forM_, when)
 import Control.Comonad (Comonad(extract))
 import Termbox2 (Tb2Event(_ch))
@@ -22,24 +22,27 @@ import UI
   )
 import qualified UI
 
-data CounterApi k = Counter { _tick :: k } deriving (Functor)
+-- Contrived custom behavior example: our app will keep track of the number of
+-- times it renders.
+--
+-- | Defines the /behavior/ (legal operations) supported by the component.
+-- In this case, we only define a '_tick' behavior to increment the count by 1.
+newtype CounterApi k = Counter { _tick :: k } deriving (Functor)
 type Counter = BehaviorOf CounterApi
-
+-- | Concrete implementation of the 'CounterApi'.
 counter :: Int -> Counter Int
 counter = behavior $ \n -> Counter (n+1)
 
--- | Our application consists of a stream of frames to render and a counter to
--- keep track of them.
+-- | Our application combines the behaviors of a stream and a 'Counter'.
 type App = C.Stream `And` Counter
 
--- | A terminal UI component with behavior defined by 'App'.
--- Advances a Conway Game of Life cellular automaton one step for each press of
--- the space bar.
+-- | A terminal UI component ('Screen') with behavior defined by 'App'.
+-- Renders the steps of a Game of Life evaluation; displays step count.
 app :: C.Pattern -> Screen App IO
-app start = screen ((C.animate start) <-> (counter 1)) render update where
+app start = screen (C.animate start <-> counter 1) render update where
 
   render :: (C.Pattern, Int) -> UI ()
-  render (pattern, frameNumber) = do
+  render (pattern, stepNumber) = do
     w <- UI.width
     h <- UI.height
     let rows = C.sheetView (h-2) (w-2) pattern
@@ -47,21 +50,19 @@ app start = screen ((C.animate start) <-> (counter 1)) render update where
       forM_ (zip [1..] row) $ \(x, cell) ->
         when (cell == X) $ UI.drawBlock x y
     UI.screenBorder 0
-    UI.statusText $ concat [ "Frame: ", show frameNumber ]
+    UI.statusText $ "Step: " ++ show stepNumber
 
   update :: (C.Pattern, Int) -> Tb2Event -> IO (Action App ())
   update _ et = return $
-    if (_ch et == UI.glyphCode ' ')
+    if _ch et == UI.glyphCode ' '
       then do
         tick
-        nextFrame
+        nextStep
       else nil
 
-  nextFrame :: Action App ()
-  nextFrame = Action $ \(And f s c) -> extract (And f (C.drop 1 s) c) ()
-
-  tick :: Action App ()
-  tick = Action $ \(And f s c) -> extract (And f s (_tick (unwrap c))) ()
+nextStep, tick :: Action App ()
+nextStep = Action $ \(And f s c) -> extract (And f (C.drop 1 s) c) ()
+tick = Action $ \(And f s c) -> extract (And f s (_tick (unwrap c))) ()
 
 -- | Load a 'C.Pattern' from a given file path (or exit gracelessly).
 patternFromFile :: String -> IO C.Pattern
@@ -76,6 +77,6 @@ patternFromFile path = do
 main :: IO ()
 main = do
   args <- getArgs
-  when (0 == length args) (error "please provide a pattern file.")
-  pattern <- patternFromFile (args !! 0)
+  when (null args) (error "please provide a pattern file.")
+  pattern <- patternFromFile (head args)
   UI.mount (app pattern)

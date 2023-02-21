@@ -37,10 +37,11 @@ module UI
   , instantiate
   ) where
 
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Control.Monad (forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (ord)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.Functor ((<&>))
 import Control.Comonad (Comonad(..), ComonadApply(..), (=>>))
 import Control.Comonad.Cofree (ComonadCofree(unwrap), Cofree, coiter)
 import qualified Termbox2 as Tb2
@@ -60,8 +61,8 @@ newtype Action space a = Action {
 } deriving Functor
 
 instance (Comonad space) => Applicative (Action space) where
-  pure x = Action $ (flip extract) x
-  tf <*> tx = tf >>= (flip fmap) tx
+  pure x = Action $ flip extract x
+  tf <*> tx = tf >>= flip fmap tx
 
 instance (Comonad space) => Monad (Action space) where
   action >>= f = Action $ step action . extend (\space a -> step (f a) space)
@@ -79,10 +80,6 @@ type BehaviorOf = Cofree
 -- | 'coiter' does exactly what we want but has an unintuitive name.
 behavior :: Functor f => (a -> f a) -> a -> BehaviorOf f a
 behavior = coiter
-
--- | Re-exported from @free@ (no name change this time).
-unwrap :: ComonadCofree f w => w a -> f (w a)
-unwrap = Control.Comonad.Cofree.unwrap
 
 -- | Alias for the universal do-nothing 'Action'.
 nil :: Comonad f => Action f ()
@@ -108,12 +105,12 @@ type Screen w m = Component m w (Action w) Console
 screen
   :: Comonad w
   => w a
-  -> (a -> UI ())                             -- ^ render
-  -> (a -> Tb2.Tb2Event -> IO (Action w ()))  -- ^ update
+  -> (a -> UI ())
+  -> (a -> Tb2.Tb2Event -> IO (Action w ()))  
   -> Screen w IO
-screen c r u = c =>> \this emit ->
+screen c render update = c =>> \this emit ->
   let value = extract this
-  in  Console (r value) (emit . u value)
+  in  Console (render value) (emit . update value)
 
 -- | Component execution loop.
 instantiate
@@ -125,7 +122,7 @@ instantiate ref = UI $ setup >> loop >> Tb2.shutdown where
   loop = do
     space <- liftIO (readIORef ref)
     let Console (UI render) handle = extract space $ \action -> do
-          (result, space') <- action >>= return . move space
+          (result, space') <- action <&> move space
           writeIORef ref space'
           return result
     Tb2.clear
@@ -143,7 +140,7 @@ mount :: (Comonad w, Run m w) => Component IO w m Console -> IO ()
 mount component = do
   ret <- newIORef component >>= runUI . instantiate
   case ret of
-    Left err -> putStrLn $ concat [ "Error: ", show err ]
+    Left err -> putStrLn $  "Error: " ++ show err
     Right _ -> return ()
 
 -- | A Day convolution can combine two comonad behaviors into one.
@@ -203,7 +200,7 @@ centerText :: String -> UI ()
 centerText msg = UI $ do
   w <- Tb2.width
   h <- Tb2.height
-  let cx = ((w `div` 2) - ((length msg) `div` 2))
+  let cx = (w `div` 2) - length msg `div` 2
   let cy = h `div` 2
   let fgAttrs = Tb2.colorGreen <> Tb2.attrUnderline <> Tb2.attrBold
   let bgAttrs = Tb2.colorMagenta
@@ -213,7 +210,7 @@ statusText :: String -> UI ()
 statusText msg = UI $ do
   w <- Tb2.width
   h <- Tb2.height
-  let cx = w - (length msg) - 2
+  let cx = w - length msg - 2
   let cy = h - 2
   Tb2.print cx cy Tb2.colorGreen Tb2.colorDefault msg
 
