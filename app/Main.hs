@@ -21,6 +21,7 @@ import UI
   , Screen
   )
 import qualified UI
+import Data.Function ((&))
 
 -- Contrived custom behavior example: our app will keep track of the number of
 -- times it renders.
@@ -38,14 +39,14 @@ type App = C.Stream `And` Counter
 
 -- | A terminal UI component ('Screen') with behavior defined by 'App'.
 -- Renders the steps of a Game of Life evaluation; displays step count.
-app :: C.Pattern -> Screen App IO
+app :: [[C.Cell]] -> Screen App IO
 app start = screen (C.animate start <-> counter 1) render update where
 
   render :: (C.Pattern, Int) -> UI ()
   render (pattern, stepNumber) = do
     w <- UI.width
     h <- UI.height
-    let rows = C.sheetView (h-2) (w-2) pattern
+    let rows = pattern & C.sheetView (h-2) (w-2)
     forM_ (zip [1..] rows) $ \(y, row) ->
       forM_ (zip [1..] row) $ \(x, cell) ->
         when (cell == X) $ UI.drawBlock x y
@@ -65,10 +66,10 @@ nextStep = Action $ \(And f s c) -> extract (And f (C.drop 1 s) c) ()
 tick = Action $ \(And f s c) -> extract (And f s (_tick (unwrap c))) ()
 
 -- | Load a 'C.Pattern' from a given file path (or exit gracelessly).
-patternFromFile :: String -> IO C.Pattern
+patternFromFile :: String -> IO [[C.Cell]]
 patternFromFile path = do
   contents <- readFile path
-  return $ C.makeSheet O $ fmap (fmap xform) (lines contents)
+  return $ fmap (fmap xform) (lines contents)
   where
     xform cl | cl == 'X' = X
              | cl == 'O' = O
@@ -80,3 +81,4 @@ main = do
   when (null args) (error "please provide a pattern file.")
   pattern <- patternFromFile (head args)
   UI.mount (app pattern)
+

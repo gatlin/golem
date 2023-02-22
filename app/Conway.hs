@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, ExistentialQuantification #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE BangPatterns #-}
 module Conway where
 -- base
 import Prelude hiding (drop, head, repeat, take, zipWith, lines)
@@ -8,43 +8,28 @@ import Data.Function ((&))
 import Data.Functor ((<&>))
 import Control.Monad (liftM2)
 -- comonad
-import Control.Comonad ( Comonad(..), ComonadApply(..), (=>>))
+import Control.Comonad ( Comonad(..), ComonadApply(..), (=>>), kfix)
 
 -- = Streams
 
 -- | The following 'Stream' type is inlined from
 --
 --   https://hackage.haskell.org/package/Stream-0.4.7.2/docs/Data-Stream.html
-data Stream a = Cons a (Stream a) deriving (Eq, Ord, Show)
+data Stream a = Cons !a (Stream a) deriving (Eq, Ord, Show)
 
 infixr 5 `Cons`
-
-instance Functor Stream where
-  fmap f ~(Cons x xs) = Cons (f x) (fmap f xs)
-
-instance Applicative Stream where
-  pure = repeat
-  (<*>) = zipWith ($)
-
-instance Comonad Stream where
-  extract = head
-  duplicate s@(Cons _ xs) = Cons s (duplicate xs)
-
-instance ComonadApply Stream where
-  (<@>) = (<*>)
 
 (<:>) :: a -> Stream a -> Stream a
 (<:>) = Cons
 
 fromList :: [a] -> Stream a
-fromList (x:xs) = Cons x (fromList xs)
-fromList []     = error "Stream.fromList applied to finite list"
+fromList = foldr (<:>) (error "Stream.fromList applied to finite list")
 
 head :: Stream a -> a
-head (Cons x _ ) = x
+head ~(Cons x _ ) = x
 
 repeat :: a -> Stream a
-repeat x = Cons x (repeat x)
+repeat x = x <:> repeat x
 
 take :: Int -> Stream a  -> [a]
 take n ~(Cons x xs)
@@ -54,29 +39,83 @@ take n ~(Cons x xs)
 
 drop :: Int -> Stream a -> Stream a
 drop n ~(Cons x xs)
-  | n == 0 = Cons x xs
+  | n == 0 = x <:> xs
   | n > 0  = drop (n - 1) xs
   | otherwise = error "Stream.drop: negative argument."
 
 toList :: Stream a -> [a]
-toList (Cons x xs) = x : toList xs
+toList ~(Cons x xs) = x : toList xs
 
 unfold :: (c -> (a,c)) -> c -> Stream a
 unfold f c =
-  let (x,d) = f c
-  in Cons x (unfold f d)
+  let (!x,d) = f c
+  in x <:> unfold f d
 
 zipWith :: (a -> b -> c) -> Stream a -> Stream b -> Stream c
-zipWith f ~(Cons x xs) ~(Cons y ys) = Cons (f x y) (zipWith f xs ys)
+zipWith f ~(Cons x xs) ~(Cons y ys) = f x y <:> zipWith f xs ys
+
+instance Functor Stream where
+  fmap f ~(Cons x xs) = f x <:> fmap f xs
+
+instance Applicative Stream where
+  pure = repeat
+  (<*>) = zipWith ($)
+
+instance Comonad Stream where
+  extract = head
+  duplicate ~(Cons x xs) = x <:> xs <:> duplicate xs
+
+instance ComonadApply Stream where
+  (<@>) = (<*>)
 
 -- = Tapes
 
 -- | A one-dimensional Stream zipper
 data Tape a = Tape
   { _lhs ::  Stream a -- ^ Values to the left of the focus
-  , _focus  ::  a
+  , _focus  ::  !a
   , _rhs ::  Stream a -- ^ Values to the right of the focus
   } deriving (Functor, Show)
+
+-- | Extract a finite portion of a 'Tape', with the focus on the left.
+tapeView :: Int -> Tape a -> [a]
+tapeView 0 _ = []
+tapeView n ~(Tape _ x rs) = x : take (n - 1) rs
+
+-- | Move a 'Tape' focus to the left.
+tapeL :: Tape a -> Tape a
+tapeL ~(Tape ~(Cons l ls) c rs) = Tape ls l (c <:> rs)
+
+-- | Move a 'Tape' focus to the right.
+tapeR :: Tape a -> Tape a
+tapeR ~(Tape ls c ~(Cons r rs)) = Tape (c <:> ls) r rs
+
+-- | Takes a seed value and production rules to produce a 'Tape'
+generate
+  :: (c -> (a, c)) -- ^ Left-hand element generation rule
+  -> (c -> a)      -- ^ Rule for generating the initial focus
+  -> (c -> (a, c)) -- ^ Right-hand element generation rule
+  -> c             -- ^ The initial seed
+  -> Tape a
+generate prev center next =
+  Tape <$> unfold prev <*> center <*> unfold next
+
+-- | Transform the branches and focus of a 'Tape'.
+shift
+  :: (a -> a) -- ^ Rule to shift the left-hand
+  -> (a -> a) -- ^ Rule to shift the right-hand
+  -> a        -- ^ New focus value
+  -> Tape a
+shift prev next =
+  generate (dup . prev) id (dup . next)
+  where dup a = (a, a)
+
+(&&&) :: (t -> a) -> (t -> b) -> t -> (a, b)
+f &&& g = \v -> (f v, g v)
+
+tapeFromPattern :: [a] -> Tape a
+tapeFromPattern ptn = generate (go pred) (ptn !!) (go succ) 0
+  where go k n = ((ptn !!) &&& id) (k n `mod` length ptn)
 
 -- | A 'Tape' is 'Applicative'.
 instance Applicative Tape where
@@ -93,44 +132,35 @@ instance Comonad Tape where
 instance ComonadApply Tape where
   (<@>) = (<*>)
 
--- | Extract a finite portion of a 'Tape', with the focus on the left.
-tapeView :: Int -> Tape a -> [a]
-tapeView 0 _ = []
-tapeView n (Tape _ x rs) = x : take (n - 1) rs
+-- = Interlude: Two-dimensional structures
+{- | law:
+1. up . down = down . up = id = left . right = right . left -}
+class TwoD t where
+  up :: t a -> t a
+  down :: t a -> t a
+  left :: t a -> t a
+  right :: t a -> t a
 
--- | Move a 'Tape' focus to the left.
-tapeL :: Tape a -> Tape a
-tapeL (Tape (Cons l ls) c rs) = Tape ls l (c <:> rs)
+  upBy, downBy, leftBy, rightBy :: Int -> t a -> t a
+  upBy n td
+    | n == 0 = td
+    | n > 0  = upBy (n-1) (up td)
+    | otherwise = downBy (-1*n) td
 
--- | Move a 'Tape' focus to the right.
-tapeR :: Tape a -> Tape a
-tapeR (Tape ls c (Cons r rs)) = Tape (c <:> ls) r rs
+  downBy n td
+    | n == 0 = td
+    | n > 0  = downBy (n-1) (down td)
+    | otherwise = upBy (-1*n) td
 
--- | Takes a seed value and production rules to produce a 'Tape'
-seed
-  :: (c -> (a, c)) -- ^ Left-hand element generation rule
-  -> (c -> a)      -- ^ Rule for generating the initial focus
-  -> (c -> (a, c)) -- ^ Right-hand element generation rule
-  -> c             -- ^ The initial seed
-  -> Tape a
-seed prev center next =
-  Tape <$> unfold prev <*> center <*> unfold next
+  leftBy n td
+    | n == 0 = td
+    | n > 0  = leftBy (n-1) (left td)
+    | otherwise = rightBy (-1*n) td
 
--- | Transform the branches and focus of a 'Tape'.
-shift
-  :: (a -> a) -- ^ Rule to shift the left-hand
-  -> (a -> a) -- ^ Rule to shift the right-hand
-  -> a        -- ^ New focus value
-  -> Tape a
-shift prev next =
-  seed (dup . prev) id (dup . next)
-  where dup a = (a, a)
-
-tapeFromPattern :: [a] -> Tape a
-tapeFromPattern [] = error "Tape.tapeFromPattern: argument must be non-empty."
-tapeFromPattern ptn = Tape lhs c rhs where
-  Cons _ lhs = fromList (P.concat (P.repeat (reverse ptn)))
-  Cons c rhs = fromList (P.concat (P.repeat ptn))
+  rightBy n td
+    | n == 0 = td
+    | n > 0  = rightBy (n-1) (right td)
+    | otherwise = leftBy (-1*n) td
 
 -- = Sheets
 
@@ -139,102 +169,137 @@ tapeFromPattern ptn = Tape lhs c rhs where
 newtype Sheet a = Sheet (Tape (Tape a))
   deriving (Functor, Show)
 
-instance Comonad Sheet where
-  extract (Sheet s) = extract $ extract s
-  duplicate = Sheet . fmap horizontal . vertical
-
-instance ComonadApply Sheet where
-  --(Sheet f) <@> (Sheet a) = Sheet ((<@>) <$> f <@> a)
-  (Sheet f) <@> (Sheet a) = Sheet (fmap (<@>) f <@> a)
-
-instance Applicative Sheet where
-  (<*>) = (<@>)
-  pure v = Sheet (pure (pure v))
-
--- | Move the focus of a 'Sheet' up
-up :: Sheet a -> Sheet a
-up (Sheet t) = Sheet (t & tapeL)
-
--- | Move the focus of a 'Sheet' down
-down :: Sheet a -> Sheet a
-down (Sheet t) = Sheet (t & tapeR)
-
--- | Move the focus of a 'Sheet' left
-left :: Sheet a -> Sheet a
-left (Sheet tt) = Sheet (tt <&> tapeL)
-
--- | Move the focus of a 'Sheet' right
-right :: Sheet a -> Sheet a
-right (Sheet tt) = Sheet (tt <&> tapeR)
-
--- | Generalization of 'shift' for the horizontal dimension.
-horizontal :: Sheet a -> Tape (Sheet a)
-horizontal = shift left right
-
--- | Generalization of 'shift' for the vertical dimension.
-vertical :: Sheet a -> Tape (Sheet a)
-vertical = shift up down
-
+-- | Generalization of 'shift'
 -- | Extract a finite subset of a 'Sheet' focused on some point.
 sheetView :: Int -> Int -> Sheet a -> [[a]]
 sheetView rows cols (Sheet sh) = sh <&> tapeView cols & tapeView rows
 
 makeSheet :: a -> [[a]] -> Sheet a
-makeSheet background list = Sheet $ Tape (pure fz) r (fromList rs) where
-  (r:rs) = (map line list) ++ (toList (pure fz))
-  ds = pure background
-  dl = toList ds
-  fz = pure background
-  line (l:ls) = Tape ds l (fromList (ls ++ dl))
+makeSheet background rows = Sheet $ Tape (pure fz) r (fromList rs) where
+  (r:rs) = (map line rows) ++ (toList (pure fz)) -- [Tape a]
+  ds = pure background -- Stream a
+  dl = toList ds -- [a]
+  fz = pure background -- Tape a
+  line (c:cs) = Tape ds c (fromList (cs ++ dl)) -- [a] -> Tape a
+
+instance Comonad Sheet where
+  extract (Sheet s) = extract $ extract s
+  duplicate = Sheet . fmap horizontal . vertical where
+    horizontal, vertical :: Sheet a -> Tape (Sheet a)
+    horizontal = shift left right
+    vertical = shift up down
+
+instance ComonadApply Sheet where
+  (Sheet f) <@> (Sheet x) = Sheet ((<@>) <$> f <@> x)
+
+instance Applicative Sheet where
+  (<*>) = (<@>)
+  pure v = Sheet (pure (pure v))
+
+instance TwoD Sheet where
+  up (Sheet t) = Sheet (t & tapeL)
+  down (Sheet t) = Sheet (t & tapeR)
+  left (Sheet tt) = Sheet (tt <&> tapeL)
+  right (Sheet tt) = Sheet (tt <&> tapeR)
 
 -- = Space
--- Inward and outward are left and right on the outer tape, resp.
--- Up and down are as with 'Sheet'.
--- Not used yet, stay tuned.
 newtype Space a = Space (Tape (Tape (Tape a))) deriving (Functor, Show)
+
+backward, forward:: Space a -> Space a
+backward (Space t) = Space (t & tapeL)
+forward (Space t) = Space (t & tapeR)
+
+toSheet :: Space a -> Sheet a
+toSheet (Space ttt) = Sheet $ extract ttt
+
+set :: a -> Space a -> Space a
+set value (Space ttt) = Space ttt' where
+  Tape ttl ttc ttr = ttt
+  Tape tl tc tr = ttc
+  Tape l _ r = tc
+  ttt' = Tape ttl (Tape tl (Tape l value r) tr) ttr
+
+insert :: [[a]] -> Space a -> Space a
+insert rs = insert' rs 0 where
+  insert' :: [[a]] -> Int -> Space a -> Space a
+  insert' [] h sp = upBy h sp
+  insert' (row:rows) h sp = insertRow row 0 sp & down & insert' rows (h+1) where
+    insertRow [] w sp' = leftBy w sp'
+    insertRow (col:cols) w sp' = set col sp' & right & insertRow cols (w+1)
 
 instance Comonad Space where
   extract (Space s) = extract $ extract $ extract s
-  duplicate = Space . fmap (fmap lateral . medial) . radial
+  duplicate = Space . fmap (fmap lateral . medial) . radial where
+    radial, medial, lateral:: Space a -> Tape (Space a)
+    radial = shift backward forward
+    medial = shift up down
+    lateral = shift left right
 
-left', right', up', down', inward, outward :: Space a -> Space a
-left' (Space ttt) = Space (ttt <&> (<&> tapeL))
-right' (Space ttt) = Space (ttt <&> (<&> tapeR))
-up' (Space tt) = Space (tt <&> tapeL)
-down' (Space tt) = Space (tt <&> tapeR)
-inward (Space t) = Space (t & tapeL)
-outward (Space t) = Space (t & tapeR)
+instance ComonadApply Space where
+  (Space f) <@> (Space x) = Space $ (<@>) <$> ((<$>) (<@>) <$> f) <@> x
 
-radial, medial, lateral:: Space a -> Tape (Space a)
-radial = shift inward outward
-medial = shift up' down'
-lateral = shift left' right'
+instance Applicative Space where
+  (<*>) = (<@>)
+  pure v = Space $ pure (pure (pure v))
+
+instance TwoD Space where
+  left ~(Space ttt) = Space (ttt <&> (<&> tapeL))
+  right ~(Space ttt) = Space (ttt <&> (<&> tapeR))
+  up ~(Space tt) = Space (tt <&> tapeL)
+  down ~(Space tt) = Space (tt <&> tapeR)
 
 -- = Cellular Automata code
 
 data Cell = X | O deriving (Eq, Show)
+type Pattern = Sheet Cell
 
 cardinality :: [ Cell ] -> Int
 cardinality = length . filter (== X)
 
+-- == Sheets
+
 -- | Extract the neighbors of a 'Sheet' focus (a sub-'Sheet')
-neighbors :: [Sheet a -> Sheet a]
+neighbors :: TwoD t => [t a -> t a]
 neighbors = horiz ++ vert ++ liftM2 (.) horiz vert where
   horiz   = [ left, right ]
   vert    = [ up, down ]
 
-aliveNeighbors :: Sheet Cell -> Int
-aliveNeighbors z = neighbors <&> (\dir -> z & dir & extract) & cardinality
+aliveNeighbors2D :: Sheet Cell -> Int
+aliveNeighbors2D z =
+  neighbors <&> (\dir -> z & dir & extract) & cardinality
 
-conway :: Sheet Cell -> Cell
-conway z = case aliveNeighbors z of
+conway2D :: Sheet Cell -> Cell
+conway2D z = case aliveNeighbors2D z of
   2 -> extract z
   3 -> X
   _ -> O
 
-animate :: Sheet Cell -> Stream (Sheet Cell)
-animate = unfold $ \g -> (g, g =>> conway)
+animate :: [[Cell]] -> Stream (Sheet Cell)
+animate ptn = flip unfold (makeSheet O ptn) $ \g -> (g, g =>> conway2D)
 
--- | Intuitively this is a 2D grid of cells, alive ('X') or dead ('O').
-type Pattern = Sheet Cell
+-- == Spaces
+
+aliveNeighbors3D :: Space Cell -> Int
+aliveNeighbors3D z =
+  map (backward .) neighbors <&> (\dir -> z & dir & extract) & cardinality
+
+conway3D :: Space Cell -> Cell
+conway3D z = case aliveNeighbors3D z of
+  2 -> z & backward & extract
+  3 -> X
+  _ -> O
+
+ether :: Space (Space Cell -> Cell)
+ether = pure conway3D & planeOf (const O) where
+  planeOf :: a -> Space a -> Space a
+  planeOf value (Space ttt) = Space ttt' where
+    Tape ttl _ ttr = ttt
+    tc = Tape (pure value) value (pure value)
+    ttc = Tape (pure tc) tc (pure tc)
+    ttt' = Tape ttl ttc ttr
+
+animate' :: [[Cell]] -> Stream Pattern
+animate' config = unfold fn initSpace where
+  initSpace = ether & insert (map (map const) config) & kfix
+  fn g = (toSheet g, forward g)
 
