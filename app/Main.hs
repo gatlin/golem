@@ -62,7 +62,7 @@ app start = screen (C.animate start <-> counter 1) render update where
       else nil
 
 nextStep, tick :: Action App ()
-nextStep = Action $ \(And f s c) -> extract (And f (C.drop 1 s) c) ()
+nextStep = Action $ \(And f s c) -> extract (And f (C.tail s) c) ()
 tick = Action $ \(And f s c) -> extract (And f s (_tick (unwrap c))) ()
 
 -- | Load a 'C.Pattern' from a given file path (or exit gracelessly).

@@ -3,7 +3,6 @@
 module Conway where
 -- base
 import Prelude hiding (drop, head, repeat, take, zipWith, lines)
-import qualified Prelude as P
 import Data.Function ((&))
 import Data.Functor ((<&>))
 import Control.Monad (liftM2)
@@ -21,21 +20,30 @@ infixr 5 `Cons`
 
 (<:>) :: a -> Stream a -> Stream a
 (<:>) = Cons
+{-# INLINE (<:>) #-}
 
 fromList :: [a] -> Stream a
 fromList = foldr (<:>) (error "Stream.fromList applied to finite list")
+{-# INLINE fromList #-}
 
 head :: Stream a -> a
-head ~(Cons x _ ) = x
+head (Cons x _ ) = x
+{-# INLINE head #-}
+
+tail :: Stream a -> Stream a
+tail (Cons _ xs) = xs
+{-# INLINE tail #-}
 
 repeat :: a -> Stream a
-repeat x = x <:> repeat x
+repeat x = Cons x (repeat x)
+{-# INLINE repeat #-}
 
 take :: Int -> Stream a  -> [a]
 take n ~(Cons x xs)
   | n == 0    = []
   | n > 0     =  x : take (n - 1) xs
   | otherwise = error "Stream.take: negative argument."
+{-# INLINE take #-}
 
 drop :: Int -> Stream a -> Stream a
 drop n ~(Cons x xs)
@@ -44,18 +52,21 @@ drop n ~(Cons x xs)
   | otherwise = error "Stream.drop: negative argument."
 
 toList :: Stream a -> [a]
-toList ~(Cons x xs) = x : toList xs
+toList (Cons x xs) = x : toList xs
+{-# INLINE toList #-}
 
 unfold :: (c -> (a,c)) -> c -> Stream a
 unfold f c =
-  let (!x,d) = f c
-  in x <:> unfold f d
+  let (x,d) = f c
+  in Cons x (unfold f d)
 
 zipWith :: (a -> b -> c) -> Stream a -> Stream b -> Stream c
-zipWith f ~(Cons x xs) ~(Cons y ys) = f x y <:> zipWith f xs ys
+zipWith f (Cons x xs) (Cons y ys) = Cons (f x y) (zipWith f xs ys)
+{-# INLINE zipWith #-}
 
 instance Functor Stream where
-  fmap f ~(Cons x xs) = f x <:> fmap f xs
+  fmap f (Cons x xs) = Cons (f x) (fmap f xs)
+  {-# INLINE fmap #-}
 
 instance Applicative Stream where
   pure = repeat
@@ -63,7 +74,7 @@ instance Applicative Stream where
 
 instance Comonad Stream where
   extract = head
-  duplicate ~(Cons x xs) = x <:> xs <:> duplicate xs
+  duplicate (Cons x xs) = x <:> xs <:> duplicate xs
 
 instance ComonadApply Stream where
   (<@>) = (<*>)
@@ -73,22 +84,25 @@ instance ComonadApply Stream where
 -- | A one-dimensional Stream zipper
 data Tape a = Tape
   { _lhs ::  Stream a -- ^ Values to the left of the focus
-  , _focus  ::  !a
+  , _focus  ::  a
   , _rhs ::  Stream a -- ^ Values to the right of the focus
   } deriving (Functor, Show)
 
 -- | Extract a finite portion of a 'Tape', with the focus on the left.
 tapeView :: Int -> Tape a -> [a]
 tapeView 0 _ = []
-tapeView n ~(Tape _ x rs) = x : take (n - 1) rs
+tapeView n (Tape _ x rs) = x : take (n - 1) rs
+{-# INLINE tapeView #-}
 
 -- | Move a 'Tape' focus to the left.
 tapeL :: Tape a -> Tape a
-tapeL ~(Tape ~(Cons l ls) c rs) = Tape ls l (c <:> rs)
+tapeL ~(Tape ~(Cons l ls) c rs) = Tape ls l (Cons c rs)
+{-# INLINE tapeL #-}
 
 -- | Move a 'Tape' focus to the right.
 tapeR :: Tape a -> Tape a
-tapeR ~(Tape ls c ~(Cons r rs)) = Tape (c <:> ls) r rs
+tapeR ~(Tape ls c ~(Cons r rs)) = Tape (Cons c ls) r rs
+{-# INLINE tapeR #-}
 
 -- | Takes a seed value and production rules to produce a 'Tape'
 generate
