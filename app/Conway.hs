@@ -59,6 +59,7 @@ unfold :: (c -> (a,c)) -> c -> Stream a
 unfold f c =
   let (x,d) = f c
   in Cons x (unfold f d)
+{-# INLINE unfold #-}
 
 zipWith :: (a -> b -> c) -> Stream a -> Stream b -> Stream c
 zipWith f (Cons x xs) (Cons y ys) = Cons (f x y) (zipWith f xs ys)
