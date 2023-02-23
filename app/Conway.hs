@@ -91,7 +91,7 @@ data Tape a = Tape
 -- | Extract a finite portion of a 'Tape', with the focus on the left.
 tapeView :: Int -> Tape a -> [a]
 tapeView 0 _ = []
-tapeView n (Tape _ x rs) = x : take (n - 1) rs
+tapeView n ~(Tape _ x rs) = x : take (n - 1) rs
 {-# INLINE tapeView #-}
 
 -- | Move a 'Tape' focus to the left.
@@ -122,7 +122,8 @@ shift
   -> Tape a
 shift prev next =
   generate (dup . prev) id (dup . next)
-  where dup a = (a, a)
+  where dup !a = (a, a)
+{-# INLINE shift #-}
 
 (&&&) :: (t -> a) -> (t -> b) -> t -> (a, b)
 f &&& g = \v -> (f v, g v)
