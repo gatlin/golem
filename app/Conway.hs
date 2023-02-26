@@ -30,10 +30,12 @@ toList :: Stream a -> [a]
 toList = F.toList
 
 head :: Stream a -> a
-head ~(Cons x _ ) = x
+head ~(Cons !x _ ) = x
+{-# INLINE head #-}
 
 tail :: Stream a -> Stream a
 tail ~(Cons _ xs) = xs
+{-# INLINE tail #-}
 
 repeat :: a -> Stream a
 repeat !x = x `seq` Cons x (repeat x)
@@ -54,7 +56,7 @@ unfold f c =
   in x `seq`  Cons x xs
 
 zipWith :: (a -> b -> c) -> Stream a -> Stream b -> Stream c
-zipWith f (Cons x xs) (Cons y ys) = Cons (f x y) (zipWith f xs ys)
+zipWith f ~(Cons x xs) ~(Cons y ys) = Cons (f x y) (zipWith f xs ys)
 
 instance Applicative Stream where
   pure = repeat
@@ -83,11 +85,11 @@ tapeView n ~(Tape _ x rs) = x : take (n - 1) rs
 
 -- | Move a 'Tape' focus to the left.
 tapeL :: Tape a -> Tape a
-tapeL ~(Tape (Cons l ls) c rs) = Tape ls l (Cons c rs)
+tapeL ~(Tape ~(Cons l ls) c rs) = Tape ls l (Cons c rs)
 
 -- | Move a 'Tape' focus to the right.
 tapeR :: Tape a -> Tape a
-tapeR ~(Tape ls c (Cons r rs)) = Tape (Cons c ls) r rs
+tapeR ~(Tape ls c ~(Cons r rs)) = Tape (Cons c ls) r rs
 
 -- | Takes a seed value and production rules to produce a 'Tape'
 generate

@@ -129,10 +129,10 @@ mount component = do
           ~(Console (UI !render) !handle) <- liftIO $!
             atomicModifyIORef' ref $ \(!space) ->
               let !c = space `seq` extract space $ \action -> do
-                        (!r, !space') <- action <&> move space
+                        ~(!r, !space') <- action <&> move space
                         space' `seq` r `seq` atomicModifyIORef' ref $!
                           const (space', r)
-              in (space, c)
+              in c `seq` (space, c)
           Tb2.clear
           render
           Tb2.present
