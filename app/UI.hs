@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE BangPatterns #-}
 
 module UI
   (
@@ -34,13 +36,12 @@ module UI
   , Interface
   , Component
   , Console(..)
-  , instantiate
   ) where
 
 import Control.Monad (forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (ord)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (newIORef, atomicModifyIORef', readIORef)
 import Data.Functor ((<&>))
 import Control.Comonad (Comonad(..), ComonadApply(..), (=>>))
 import Control.Comonad.Cofree (ComonadCofree(unwrap), Cofree, coiter)
@@ -68,7 +69,7 @@ instance (Comonad space) => Monad (Action space) where
   action >>= f = Action $ step action . extend (\space a -> step (f a) space)
 
 instance (Functor space) => Run (Action space) space where
-  run f action space = step action $ fmap (flip f) space
+  run f action space = step action $! fmap (flip f) space
 
 type Dispatcher base action = base (action ()) -> base ()
 type Interface base action view = Dispatcher base action -> view
@@ -106,34 +107,15 @@ screen
   :: Comonad w
   => w a
   -> (a -> UI ())
-  -> (a -> Tb2.Tb2Event -> IO (Action w ()))  
+  -> (Tb2.Tb2Event -> IO (Action w ()))
   -> Screen w IO
-screen c render update = c =>> \this emit ->
-  let value = extract this
-  in  Console (render value) (emit . update value)
+screen !c render update = c =>> \this emit ->
+  let !value = extract this
+      !r     = render value
+      !u     = emit . update
+  in  r `seq` u `seq` value `seq` Console r u
 
 -- | Component execution loop.
-instantiate
-  :: (Comonad w, Run m w)
-  => IORef (Component IO w m Console)
-  -> UI ()
-instantiate ref = UI $ setup >> loop >> Tb2.shutdown where
-  setup = Tb2.init >> Tb2.setInputMode Tb2.inputAlt
-  loop = do
-    space <- liftIO (readIORef ref)
-    let Console (UI render) handle = extract space $ \action -> do
-          (result, space') <- action <&> move space
-          writeIORef ref space'
-          return result
-    Tb2.clear
-    render
-    Tb2.present
-    eventOrNot <- Tb2.peekEvent 10
-    case eventOrNot of
-      Nothing -> loop
-      Just evt -> unless (Tb2._key evt == Tb2.keyCtrlC) $ do
-        liftIO (handle evt)
-        loop
 
 -- | Sets up a component for execution and catches exceptions.
 mount :: (Comonad w, Run m w) => Component IO w m Console -> IO ()
@@ -142,6 +124,22 @@ mount component = do
   case ret of
     Left err -> putStrLn $  "Error: " ++ show err
     Right _ -> return ()
+    where
+      setup = Tb2.init >> Tb2.setInputMode Tb2.inputAlt
+      instantiate ref = UI $! setup >> loop >> Tb2.shutdown where
+        loop = do
+          !space <- liftIO $! readIORef ref
+          let ~(Console (UI !render) !handle) = space `seq` extract space $ \action -> do
+                (!r, !space') <- action <&> move space
+                space' `seq` atomicModifyIORef' ref $ const (space', r)
+          Tb2.clear
+          render
+          Tb2.present
+          event <- Tb2.pollEvent
+          unless (Tb2._key event == Tb2.keyCtrlC) $! do
+            r <- liftIO $! handle event
+            r `seq` loop
+        {-# NOINLINE loop #-}
 
 -- | A Day convolution can combine two comonad behaviors into one.
 data And f g a = forall x y. And (x -> y -> a) (f x) (g y)
@@ -150,7 +148,7 @@ data And f g a = forall x y. And (x -> y -> a) (f x) (g y)
 (<->) = UI.And (,)
 
 instance Functor (And f g) where
-  fmap g (And f x y) = And (\a b -> g (f a b)) x y
+  fmap g (And f x y) = And (\a b -> let fab = f a b in g fab) x y
 
 instance (Comonad f, Comonad g) => Comonad (And f g) where
   extract (And f x y) = f (extract x) (extract y)
@@ -172,10 +170,10 @@ blockGlyph :: Integral n => n
 blockGlyph = glyphCode '▄'
 
 drawBlock :: Int -> Int -> UI ()
-drawBlock x y = UI $ Tb2.setCell x y blockGlyph Tb2.colorWhite Tb2.colorDefault
+drawBlock x y = UI $! Tb2.setCell x y blockGlyph Tb2.colorWhite Tb2.colorDefault
 
 drawRect :: Int -> Int -> Int -> Int -> UI ()
-drawRect left top w h = UI $ do
+drawRect left top w h = UI $! do
   let bottom = top+h-1
   let right = left+w-1
   let setCell x y ch = Tb2.setCell x y ch Tb2.colorWhite Tb2.colorDefault
@@ -197,7 +195,7 @@ screenBorder border = do
   drawRect border border (w-border) (h-border)
 
 centerText :: String -> UI ()
-centerText msg = UI $ do
+centerText msg = UI $! do
   w <- Tb2.width
   h <- Tb2.height
   let cx = (w `div` 2) - length msg `div` 2
@@ -207,7 +205,7 @@ centerText msg = UI $ do
   Tb2.print cx cy fgAttrs bgAttrs msg
 
 statusText :: String -> UI ()
-statusText msg = UI $ do
+statusText msg = UI $! do
   w <- Tb2.width
   h <- Tb2.height
   let cx = w - length msg - 2

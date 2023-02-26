@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveFunctor, TypeOperators #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Main (main) where
 
@@ -21,7 +23,6 @@ import UI
   , Screen
   )
 import qualified UI
-import Data.Function ((&))
 
 -- Contrived custom behavior example: our app will keep track of the number of
 -- times it renders.
@@ -46,24 +47,24 @@ app start = screen (C.animate start <-> counter 1) render update where
   render (pattern, stepNumber) = do
     w <- UI.width
     h <- UI.height
-    let rows = pattern & C.sheetView (h-2) (w-2)
+    let rows = C.sheetView (h-2) (w-2) pattern
     forM_ (zip [1..] rows) $ \(y, row) ->
       forM_ (zip [1..] row) $ \(x, cell) ->
         when (cell == X) $ UI.drawBlock x y
     UI.screenBorder 0
     UI.statusText $ "Step: " ++ show stepNumber
 
-  update :: (C.Pattern, Int) -> Tb2Event -> IO (Action App ())
-  update _ et = return $
+  update :: Tb2Event -> IO (Action App ())
+  update et = return $!
     if _ch et == UI.glyphCode ' '
       then do
         tick
         nextStep
       else nil
 
-nextStep, tick :: Action App ()
-nextStep = Action $ \(And f s c) -> extract (And f (C.tail s) c) ()
-tick = Action $ \(And f s c) -> extract (And f s (_tick (unwrap c))) ()
+  nextStep, tick :: Action App ()
+  nextStep = Action $ \(And f s c) -> extract (And f (C.tail s) c) ()
+  tick = Action $ \(And f s c) -> extract (And f s (_tick (unwrap c))) ()
 
 -- | Load a 'C.Pattern' from a given file path (or exit gracelessly).
 patternFromFile :: String -> IO [[C.Cell]]
