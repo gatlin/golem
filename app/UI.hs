@@ -39,7 +39,7 @@ module UI
 import Control.Monad (forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (ord)
-import Data.IORef (newIORef, atomicModifyIORef', readIORef)
+import Data.IORef (newIORef, atomicModifyIORef')
 import Data.Functor ((<&>))
 import Control.Comonad (Comonad(..), ComonadApply(..), (=>>))
 import Control.Comonad.Cofree (ComonadCofree(unwrap), Cofree, coiter)
@@ -126,10 +126,11 @@ mount component = do
       setup = Tb2.init >> Tb2.setInputMode Tb2.inputAlt
       instantiate ref = UI $! setup >> loop >> Tb2.shutdown where
         loop = do
-          !space <- liftIO $! readIORef ref
-          let ~(Console (UI !render) !handle) = space `seq` extract space $ \action -> do
-                (!r, !space') <- action <&> move space
-                space' `seq` r `seq` atomicModifyIORef' ref $ const (space', r)
+          ~(Console (UI !render) !handle) <- liftIO $! atomicModifyIORef' ref $ \space ->
+            let c = space `seq` extract space $ \action -> do
+                      (!r, !space') <- action <&> move space
+                      space' `seq` r `seq` atomicModifyIORef' ref $ const (space', r)
+            in (space, c)
           Tb2.clear
           render
           Tb2.present
