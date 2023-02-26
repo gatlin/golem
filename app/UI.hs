@@ -107,12 +107,12 @@ screen
   :: Comonad w
   => w a
   -> (a -> UI ())
-  -> (Tb2.Tb2Event -> IO (Action w ()))
+  -> (a -> Tb2.Tb2Event -> IO (Action w ()))
   -> Screen w IO
 screen !c render update = c =>> \this emit ->
   let !value = extract this
       !r     = render value
-      !u     = emit . update
+      !u     = emit . update value
   in  r `seq` u `seq` value `seq` Console r u
 
 -- | Component execution loop.

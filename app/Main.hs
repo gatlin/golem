@@ -54,8 +54,8 @@ app start = screen (C.animate start <-> counter 1) render update where
     UI.screenBorder 0
     UI.statusText $ "Step: " ++ show stepNumber
 
-  update :: Tb2Event -> IO (Action App ())
-  update et = return $!
+  update :: (C.Pattern, Int) -> Tb2Event -> IO (Action App ())
+  update _ et = return $!
     if _ch et == UI.glyphCode ' '
       then do
         tick
