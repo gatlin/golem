@@ -37,16 +37,9 @@ tail ~(Cons _ xs) = xs
 
 repeat :: a -> Stream a
 repeat !x = x `seq` Cons x (repeat x)
-{-# INLINE repeat #-}
 
 take :: Int -> Stream a  -> [a]
 take n  = P.take n . toList
-{-
-take n (Cons x xs)
-  | n == 0    = []
-  | n > 0     =  x : take (n - 1) xs
-  | otherwise = error "Stream.take: negative argument."
--}
 
 drop :: Int -> Stream a -> Stream a
 drop n (Cons x xs)

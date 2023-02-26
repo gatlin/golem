@@ -1,6 +1,4 @@
-{-# LANGUAGE DeriveFunctor, TypeOperators #-}
-{-# LANGUAGE StrictData #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveFunctor, TypeOperators, StrictData #-}
 
 module Main (main) where
 
@@ -54,7 +52,6 @@ app start = screen (C.animate start <-> counter 1) render update where
     UI.screenBorder 0
     UI.statusText $ "Step: " ++ show stepNumber
 
-  update :: (C.Pattern, Int) -> Tb2Event -> IO (Action App ())
   update _ et = return $!
     if _ch et == UI.glyphCode ' '
       then do

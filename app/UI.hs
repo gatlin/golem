@@ -1,8 +1,6 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE StrictData #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ExistentialQuantification, StrictData, BangPatterns #-}
 
 module UI
   (
@@ -111,9 +109,9 @@ screen
   -> Screen w IO
 screen !c render update = c =>> \this emit ->
   let !value = extract this
-      !r     = render value
-      !u     = emit . update value
-  in  r `seq` u `seq` value `seq` Console r u
+      !r     = value `seq` render value
+      !u     = value `seq` emit . update value
+  in  Console r u
 
 -- | Component execution loop.
 
@@ -131,7 +129,7 @@ mount component = do
           !space <- liftIO $! readIORef ref
           let ~(Console (UI !render) !handle) = extract space $ \action -> do
                 (!r, !space') <- action <&> move space
-                atomicModifyIORef' ref $ const (space', r)
+                space' `seq` atomicModifyIORef' ref $ const (space', r)
           Tb2.clear
           render
           Tb2.present
@@ -176,7 +174,7 @@ drawRect :: Int -> Int -> Int -> Int -> UI ()
 drawRect left top w h = UI $! do
   let bottom = top+h-1
   let right = left+w-1
-  let setCell x y ch = Tb2.setCell x y ch Tb2.colorWhite Tb2.colorDefault
+  let setCell x y ch = Tb2.setCell x y ch Tb2.colorBlue Tb2.colorDefault
   forM_ [left..right] $ \i -> do
     setCell i top 0x2500
     setCell i bottom 0x2500
