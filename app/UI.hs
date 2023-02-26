@@ -126,11 +126,13 @@ mount component = do
       setup = Tb2.init >> Tb2.setInputMode Tb2.inputAlt
       instantiate ref = UI $! setup >> loop >> Tb2.shutdown where
         loop = do
-          ~(Console (UI !render) !handle) <- liftIO $! atomicModifyIORef' ref $ \space ->
-            let c = space `seq` extract space $ \action -> do
-                      (!r, !space') <- action <&> move space
-                      space' `seq` r `seq` atomicModifyIORef' ref $ const (space', r)
-            in (space, c)
+          ~(Console (UI !render) !handle) <- liftIO $!
+            atomicModifyIORef' ref $ \(!space) ->
+              let !c = space `seq` extract space $ \action -> do
+                        (!r, !space') <- action <&> move space
+                        space' `seq` r `seq` atomicModifyIORef' ref $!
+                          const (space', r)
+              in (space, c)
           Tb2.clear
           render
           Tb2.present
