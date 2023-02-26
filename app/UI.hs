@@ -129,9 +129,9 @@ mount component = do
       instantiate ref = UI $! setup >> loop >> Tb2.shutdown where
         loop = do
           !space <- liftIO $! readIORef ref
-          let ~(Console (UI !render) !handle) = space `seq` extract space $ \action -> do
+          let ~(Console (UI !render) !handle) = extract space $ \action -> do
                 (!r, !space') <- action <&> move space
-                space' `seq` atomicModifyIORef' ref $ const (space', r)
+                atomicModifyIORef' ref $ const (space', r)
           Tb2.clear
           render
           Tb2.present
