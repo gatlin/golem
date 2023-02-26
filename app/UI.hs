@@ -109,9 +109,9 @@ screen
   -> Screen w IO
 screen !c render update = c =>> \this emit ->
   let !value = extract this
-      !r     = value `seq` render value
-      !u     = value `seq` emit . update value
-  in  Console r u
+      !r     = render value
+      !u     = emit . update value
+  in  value `seq` r `seq` u `seq` Console r u
 
 -- | Component execution loop.
 
@@ -127,15 +127,15 @@ mount component = do
       instantiate ref = UI $! setup >> loop >> Tb2.shutdown where
         loop = do
           !space <- liftIO $! readIORef ref
-          let ~(Console (UI !render) !handle) = extract space $ \action -> do
+          let ~(Console (UI !render) !handle) = space `seq` extract space $ \action -> do
                 (!r, !space') <- action <&> move space
-                space' `seq` atomicModifyIORef' ref $ const (space', r)
+                space' `seq` r `seq` atomicModifyIORef' ref $ const (space', r)
           Tb2.clear
           render
           Tb2.present
           event <- Tb2.pollEvent
           unless (Tb2._key event == Tb2.keyCtrlC) $! do
-            r <- liftIO $! handle event
+            !r <- liftIO $! handle event
             r `seq` loop
         {-# NOINLINE loop #-}
 
