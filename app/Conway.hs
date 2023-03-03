@@ -51,12 +51,13 @@ drop n (Cons x xs)
 
 unfold :: (c -> (a,c)) -> c -> Stream a
 unfold f c =
-  let (!x,!d) = f c
+  let ~(!x,!d) = f c
       xs     = unfold f d
-  in x `seq`  Cons x xs
+  in x <:> xs
 
 zipWith :: (a -> b -> c) -> Stream a -> Stream b -> Stream c
 zipWith f ~(Cons x xs) ~(Cons y ys) = Cons (f x y) (zipWith f xs ys)
+{-# INLINE zipWith #-}
 
 instance Applicative Stream where
   pure = repeat
@@ -86,10 +87,12 @@ tapeView n ~(Tape _ x rs) = x : take (n - 1) rs
 -- | Move a 'Tape' focus to the left.
 tapeL :: Tape a -> Tape a
 tapeL ~(Tape ~(Cons l ls) c rs) = Tape ls l (Cons c rs)
+{-# INLINE tapeL #-}
 
 -- | Move a 'Tape' focus to the right.
 tapeR :: Tape a -> Tape a
 tapeR ~(Tape ls c ~(Cons r rs)) = Tape (Cons c ls) r rs
+{-# INLINE tapeR #-}
 
 -- | Takes a seed value and production rules to produce a 'Tape'
 generate
@@ -100,6 +103,7 @@ generate
   -> Tape a
 generate prev center next =
   Tape <$> unfold prev <*> center <*> unfold next
+{-# INLINE generate #-}
 
 -- | Transform the branches and focus of a 'Tape'.
 shift
@@ -109,7 +113,7 @@ shift
   -> Tape a
 shift prev next =
   generate (dup . prev) id (dup . next)
-  where dup a = (a, a)
+  where dup !a = (a, a)
 
 (&&&) :: (t -> a) -> (t -> b) -> t -> (a, b)
 f &&& g = \v -> (f v, g v)
@@ -128,6 +132,7 @@ instance Applicative Tape where
 -- | A 'Tape' is also a 'Comonad'.
 instance Comonad Tape where
   extract   = _focus
+  {-# INLINE extract #-}
   duplicate = shift tapeL tapeR
   {-# INLINE duplicate #-}
 
@@ -178,18 +183,20 @@ sheetView rows cols (Sheet sh) = sh `seq` sh <&> tapeView cols & tapeView rows
 
 makeSheet :: a -> [[a]] -> Sheet a
 makeSheet background rows = Sheet $! Tape (pure fz) r (fromList rs) where
-  (r:rs) = (map line rows) ++ (toList (pure fz)) -- [Tape a]
-  ds = pure background -- Stream a
-  dl = toList ds -- [a]
-  fz = pure background -- Tape a
-  line (c:cs) = Tape ds c (fromList (cs ++ dl)) -- [a] -> Tape a
+  (!r:rs) = (map line rows) ++ (toList (pure fz)) -- [Tape a]
+  !ds = pure background -- Stream a
+  !dl = toList ds -- [a]
+  !fz = pure background -- Tape a
+  line (!c:cs) = Tape ds c (fromList (cs ++ dl)) -- [a] -> Tape a
 
 instance Comonad Sheet where
-  extract (Sheet s) = extract $! extract s
+  extract (Sheet s) = extract $ extract s
+  {-# INLINE extract #-}
   duplicate = Sheet . fmap horizontal . vertical where
     horizontal, vertical :: Sheet a -> Tape (Sheet a)
     horizontal = shift left right
     vertical = shift up down
+  {-# INLINE duplicate #-}
 
 instance ComonadApply Sheet where
   (Sheet f) <@> (Sheet x) = Sheet ((<@>) <$> f <@> x)
@@ -199,10 +206,14 @@ instance Applicative Sheet where
   pure v = Sheet (pure (pure v))
 
 instance TwoD Sheet where
-  up (Sheet t) = Sheet (t & tapeL)
-  down (Sheet t) = Sheet (t & tapeR)
-  left (Sheet tt) = Sheet (tt <&> tapeL)
-  right (Sheet tt) = Sheet (tt <&> tapeR)
+  up (Sheet !t) = Sheet (t & tapeL)
+  {-# INLINE up #-}
+  down (Sheet !t) = Sheet (t & tapeR)
+  {-# INLINE down #-}
+  left (Sheet !tt) = Sheet (tt <&> tapeL)
+  {-# INLINE left #-}
+  right (Sheet !tt) = Sheet (tt <&> tapeR)
+  {-# INLINE right #-}
 
 -- = Cellular Automata code
 
@@ -214,13 +225,13 @@ cardinality = length . filter (== X)
 
 -- | Extract the neighbors of a 'Sheet' focus (a sub-'Sheet')
 neighbors :: TwoD t => [t a -> t a]
-neighbors = horiz ++ vert ++ liftM2 (.) horiz vert where
-  horiz   = [ left, right ]
-  vert    = [ up, down ]
+neighbors = [ left, right, up, down, left . up, left . down, right . up, right . down ]
+{-# INLINE neighbors #-}
 
 aliveNeighbors2D :: Sheet Cell -> Int
-aliveNeighbors2D z =
-  neighbors <&> (\dir -> z & dir & extract) & cardinality
+aliveNeighbors2D z = neighbors <&> fn & cardinality where
+  fn dir = extract $! dir z
+  {-# INLINE fn #-}
 
 conway2D :: Sheet Cell -> Cell
 conway2D z = case aliveNeighbors2D z of
@@ -228,9 +239,10 @@ conway2D z = case aliveNeighbors2D z of
   3 -> X
   _ -> O
 
-animate :: [[Cell]] -> Stream (Sheet Cell)
+animate :: [[Cell]] -> Stream Pattern
 animate ptn = unfold fn sh where
   sh :: Sheet Cell
   sh = makeSheet O ptn
-  fn g = let g' = g =>> conway2D in (g, g')
-
+  fn !g =
+    let !g' = g =>> conway2D
+    in  (g, g')

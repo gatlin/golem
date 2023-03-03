@@ -1,22 +1,29 @@
-{-# LANGUAGE DeriveFunctor, TypeOperators, StrictData #-}
+
+{-# LANGUAGE DeriveFunctor, TypeOperators, BangPatterns, TypeFamilies #-}
+{-# LANGUAGE StrictData #-}
 
 module Main (main) where
 
 import System.Environment (getArgs)
 import Control.Monad (forM_, when)
-import Control.Comonad (Comonad(extract))
-import Termbox2 (Tb2Event(_ch))
+import Control.Comonad (Comonad(..), (=>>))
+import qualified Control.Comonad.Representable.Store as R
+import Control.Comonad.Store (Store, store, runStore)
+import Data.Distributive (Distributive(..))
+import Data.Functor.Rep (Representable(..), distributeRep)
+import qualified Data.Sequence as S
+import Termbox2 (Tb2Event(_ch, _type, _w, _h),eventResize)
 import Conway (Cell(X), Cell(O))
 import qualified Conway as C
 import UI
   ( UI
   , (<->)
   , Action(..)
+  , unwrap
   , nil
   , BehaviorOf
-  , And(..)
   , behavior
-  , unwrap
+  , And(..)
   , screen
   , Screen
   )
@@ -52,8 +59,8 @@ app start = screen (C.animate start <-> counter 1) render update where
     UI.screenBorder 0
     UI.statusText $ "Step: " ++ show stepNumber
 
-  update :: (C.Pattern, Int) -> Tb2Event -> IO (Action App ())
-  update state et = state `seq` return $!
+  update :: Tb2Event -> IO (Action App ())
+  update et = return $!
     if _ch et == UI.glyphCode ' '
       then do
         tick
