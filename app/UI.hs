@@ -44,7 +44,7 @@ module UI
 import Control.Exception (Exception(..), bracket_, throwIO)
 import Control.Monad (forM_, forever)
 import Data.Char (ord)
-import Data.IORef (IORef, newIORef, atomicModifyIORef')
+import Data.IORef.MonadIO (IORef, newIORef, atomicModifyIORef)
 import Control.Comonad (Comonad(..), (=>>))
 import Control.Comonad.Cofree (ComonadCofree(unwrap), Cofree, coiter)
 import Control.Comonad.Store (ComonadStore(..), Store, store, runStore)
@@ -145,8 +145,8 @@ setup, dispose :: Tb2.Termbox2 ()
 setup = Tb2.init
 dispose = Tb2.shutdown
 
-loop :: (Comonad space, ?ref :: IORef (Activity space IO)) => Tb2.Termbox2 ()
-loop = deliver $ events >< display where
+loop :: (Comonad space) => IORef (Activity space IO) -> Tb2.Termbox2 ()
+loop ref = deliver $ events >< display where
   events = forever $ do
     !mEvent <- embed Tb2.pollEvent
     case mEvent of
@@ -155,10 +155,11 @@ loop = deliver $ events >< display where
         then embed quit
         else maybe (return ()) yield $! fromTb2Event event
   display = forever $ do
-    space <- embed $ liftIO $! atomicModifyIORef' ?ref $ \sp -> (sp, sp)
-    let ~(Console handle ~(UI render)) = extract space $ \action -> do
+    space <- embed $ liftIO $!
+      atomicModifyIORef ref $ \(!sp) -> sp `seq` (sp, sp)
+    let ~(Console handle ~(UI render)) = extract space $ \(!action) -> do
           space' <- move (const id) action (space =>> return)
-          atomicModifyIORef' ?ref $ const (space', ())
+          atomicModifyIORef ref (const (space', ()))
     embed $ Tb2.clear >> render >> Tb2.present
     await >>= embed . liftIO . handle
 
@@ -166,11 +167,10 @@ loop = deliver $ events >< display where
 mount :: Comonad space => Activity space IO -> IO ()
 mount component = do
   ref <- newIORef component
-  let ?ref = ref
   bracket_
     (Tb2.runTermbox2 setup)
     (Tb2.runTermbox2 dispose)
-    (Tb2.runTermbox2 loop)
+    (Tb2.runTermbox2 $ loop ref)
 
 -- Part 3: Drawing utilities.
 

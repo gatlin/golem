@@ -66,7 +66,6 @@ patternFromFile path = do
       _   -> return []
   return $ fromPair <$> concat (concat coords)
 
-
 main :: IO ()
 main = do
   args <- getArgs
