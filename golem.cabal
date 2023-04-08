@@ -62,7 +62,7 @@ executable golem
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules:    Conway, UI
+    other-modules:    Conway, UI, Peano, Lists, Nested, Sheet, CPS, Tubes
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -74,12 +74,10 @@ executable golem
                       containers,
                       distributive,
                       free,
-                      mtl,
-                      nothunks,
-                      resourcet,
-                      streaming,
-                      streaming-bytestring,
-                      termbox2-hs
+                      monadIO,
+                      profunctors,
+                      termbox2-hs,
+                      transformers
 
     -- Directories containing source files.
     hs-source-dirs:   app

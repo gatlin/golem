@@ -1,24 +1,22 @@
 {-# LANGUAGE DeriveFunctor, RankNTypes, MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving, StrictData #-}
 {-# LANGUAGE ExistentialQuantification, BangPatterns, TypeFamilies #-}
+{-# LANGUAGE ImplicitParams, ConstraintKinds #-}
 
 module UI
   (
   -- UI
     UI
-  , mkUI
-  , runUI
   , Action(..)
-  , act
-  , nil
   , mount
   , BehaviorOf
   , behavior
   , Control.Comonad.Cofree.unwrap
-  , Screen
-  , screen
-  , And(..)
-  , (<->)
+  , Activity
+  , modify
+  , put
+  , get
+  , Event(..)
   -- Drawing utilities
   , glyphCode
   , blockGlyph
@@ -30,181 +28,151 @@ module UI
   , width
   , height
   -- Remainder
-  , Run(..)
-  , move
-  , Dispatcher
+  , Callback
   , Interface
   , Component
   , Console(..)
+  , move
+  , hoist
+  -- Re-exports for convenience
+  , Control.Comonad.Store.Store
+  , Control.Comonad.Store.store
+  , Control.Comonad.Store.runStore
+  , Control.Monad.IO.Class.liftIO
   ) where
 
-import Control.Monad (forM_, unless)
-import Control.Monad.IO.Class (liftIO)
+import Control.Exception (Exception(..), bracket_, throwIO)
+import Control.Monad (forM_, forever)
 import Data.Char (ord)
-import Data.Distributive (Distributive(..))
-import Data.Functor.Rep (Representable(..))
 import Data.IORef (IORef, newIORef, atomicModifyIORef')
-import Control.Comonad (Comonad(..), ComonadApply(..), (=>>))
+import Control.Comonad (Comonad(..), (=>>))
 import Control.Comonad.Cofree (ComonadCofree(unwrap), Cofree, coiter)
+import Control.Comonad.Store (ComonadStore(..), Store, store, runStore)
+import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.Trans.Class (MonadTrans(..))
 import qualified Termbox2 as Tb2
+import Tubes ((><), await, deliver, embed, yield)
 
--- = Part 1: Abstract components and spaces.
+-- Part 1: Components, actions, and spaces.
 
--- | credit: David Laing calls this 'Pairing'.
-class (Functor f, Functor g) => Run f g where
-  run :: (a -> b -> r) -> f a -> g b -> r
+type Callback effect action = action effect () -> effect ()
+type Interface effect action view = Callback effect action -> view
+type Component effect space action view = space (Interface effect action view)
 
-move :: (Comonad w, Run m w) => w a -> m b -> (b, w a)
-move space action = run (,) action (duplicate space)
+-- | Represents some action performed with or on a given component @space@.
+-- These actions have side effects in a base monad.
+newtype Action space effect a = Action {
+  work :: forall r. space (a -> effect r) -> effect r
+} deriving (Functor)
 
--- concept: space (a -> result) -> space result ???
-newtype Action space a = Action {
-  step :: forall result. space (a -> result) -> result
-} deriving Functor
+instance Comonad space => Applicative (Action space effect) where
+  pure a = Action (`extract` a)
+  mf <*> ma = mf >>= \f -> fmap f ma
 
-instance (Comonad space) => Applicative (Action space) where
-  pure x = Action $ flip extract x
-  tf <*> tx = tf >>= flip fmap tx
+instance Comonad space => Monad (Action space effect) where
+  Action k >>= f = Action (k . extend (\wa a -> work (f a) wa))
 
-instance (Comonad space) => Monad (Action space) where
-  action >>= f = Action $ step action . extend (\space a -> step (f a) space)
-  {-# INLINE (>>=) #-}
+instance Comonad space => MonadTrans (Action space) where
+  lift m = Action (extract . fmap (m >>=))
 
-instance (Functor space) => Run (Action space) space where
-  run f action space = step action $! fmap (flip f) space
-  {-# INLINE run #-}
+instance (Comonad space, MonadIO effect) => MonadIO (Action space effect) where
+  liftIO = lift . liftIO
 
--- concept: Dispatcher base action = action (base ()) -> base () ?
-type Dispatcher base action = base (action ()) -> base ()
-type Interface base action view = Dispatcher base action -> view
-type Component base space action view = space (Interface base action view)
+-- | Carries out an 'Action' in a space yielding a result with side effects.
+move
+  :: (Functor space)
+  => (a -> b -> effect r)
+  -> Action space effect a
+  -> space b
+  -> effect r
+move f a s = work a (fmap (flip f) s)
 
--- | 'Cofree' does exactly what we want but has an unintuitive name.
+-- | Hoist an 'Action' for one space into a different space contravariantly.
+hoist
+  :: (forall x. w x -> v x)
+  -> Action v effect a
+  -> Action w effect a
+hoist transform action = Action $ work action . transform
+
+-- | 'Action' for components built from a 'ComonadStore': modifies state.
+modify :: (ComonadStore s w) => (s -> s) -> Action w effect ()
+modify fn = Action $ \st -> extract (seeks fn st) ()
+
+-- | 'Action' for components built from a 'ComonadStore': overwrites state.
+put :: (ComonadStore s w) => s -> Action w effect ()
+put x = Action $ \st -> extract (seek x st) ()
+
+-- | 'Action' for components built from a 'ComonadStore': loads state.
+get :: (ComonadStore s w) => Action w effect s
+get = Action $ \st -> extract st (pos st)
+
+-- | Defines a space with the behavior of a given base functor.
 type BehaviorOf = Cofree
 
--- | 'coiter' does exactly what we want but has an unintuitive name.
--- concept: instead of coiter, use Representable and index
+-- | Constructs a space with the behavior of a given base functor.
 behavior :: Functor f => (a -> f a) -> a -> BehaviorOf f a
 behavior = coiter
 
--- | Alias for the universal do-nothing 'Action'.
-nil :: (Comonad f) => Action f ()
-nil = return ()
+-- Part 2: Components in the terminal console.
 
--- | Construct an action from a 'Representable' index.
--- NB: this is subject to disappear or change.
-act
-  :: (Applicative f, Rep space ~ f p, Comonad space, Representable space)
-  => p -> Action space ()
-act op = Action $ \(!w) ->
-  let !w' = w =>> flip index (pure op)
-  in  extract w' ()
-
--- = Part 2: Components in the terminal console.
-
+-- | DSL based on 'Tb2.Termbox2' for UI drawing operations
+-- The decisions to not derive 'MonadIO' or export the constructor are
+-- deliberate.
 newtype UI a = UI (Tb2.Termbox2 a) deriving ( Functor, Applicative, Monad )
 
-mkUI :: Tb2.Termbox2 a -> UI a
-mkUI = UI
+-- | FIXME this newtype wrapper is purely due to laziness and a better Event
+-- type should be created so the tb2 abstraction does not leak.
+newtype Event = Event Tb2.Tb2Event deriving (Show, Eq)
 
-runUI :: UI a -> IO (Either Tb2.Tb2Err a)
-runUI (UI tb2) = Tb2.runTermbox2 tb2
+fromTb2Event :: Tb2.Tb2Event -> Maybe Event
+fromTb2Event = Just . Event
 
--- | A console view
+-- | A console view.
 data Console =
   Console
-    (UI ())                 -- ^ Renders output when called.
-    (Tb2.Tb2Event -> IO ()) -- ^ Awaits incoming events.
+    (Event -> IO ()) -- ^ Awaits incoming events.
+    (UI ())          -- ^ Renders output when called.
 
--- | Legible alias for a common component type.
-type Screen w m = Component m w (Action w) Console
+type Activity w m = Component m w (Action w) Console
 
--- | Construct a screen component with a given behavior.
-screen
-  :: Comonad w
-  => w a
-  -> (a -> UI ())
-  -> (Tb2.Tb2Event -> IO (Action w ()))
-  -> Screen w IO
-screen c render update = c =>> \(!this) (!emit) ->
-  let !value = extract this
-      !r      = render value
-      !u      = emit . update
-  in  Console r u
+data Shutdown = Shutdown deriving Show
+instance Exception Shutdown
 
-instantiate
-  :: (Comonad w, Run m w)
-  => IORef (Component IO w m Console)
-  -> UI ()
-instantiate ref = mkUI $ setup >> loop >> Tb2.shutdown where
-  setup = Tb2.init
-  callback !action = do
-    !reaction <- action
-    atomicModifyIORef' ref $ \sp ->
-      let ~(!r, !sp') = move sp reaction
-      in (sp', r)
-  loop = do
-    ~(Console (UI render) handle) <- liftIO $!
-      atomicModifyIORef' ref $ \(!sp) -> (sp, extract sp callback)
-    Tb2.clear
-    render
-    Tb2.present
-    !event <- Tb2.pollEvent
-    event `seq` unless (Tb2._key event == Tb2.keyCtrlQ) $! do
-      !r <- liftIO $! handle event
-      r `seq` loop
+quit :: MonadIO m => m a
+quit = liftIO $ throwIO Shutdown
+
+setup, dispose :: Tb2.Termbox2 ()
+setup = Tb2.init
+dispose = Tb2.shutdown
+
+loop :: (Comonad space, ?ref :: IORef (Activity space IO)) => Tb2.Termbox2 ()
+loop = deliver $ events >< display where
+  events = forever $ do
+    !mEvent <- embed Tb2.pollEvent
+    case mEvent of
+      Nothing -> return ()
+      Just !event -> if Tb2._key event == Tb2.keyCtrlQ
+        then embed quit
+        else maybe (return ()) yield $! fromTb2Event event
+  display = forever $ do
+    space <- embed $ liftIO $! atomicModifyIORef' ?ref $ \sp -> (sp, sp)
+    let ~(Console handle ~(UI render)) = extract space $ \action -> do
+          space' <- move (const id) action (space =>> return)
+          atomicModifyIORef' ?ref $ const (space', ())
+    embed $ Tb2.clear >> render >> Tb2.present
+    await >>= embed . liftIO . handle
 
 -- | Sets up a component for execution and catches exceptions.
-mount :: (Comonad w, Run m w) => Component IO w m Console -> IO ()
+mount :: Comonad space => Activity space IO -> IO ()
 mount component = do
-  ret <- newIORef component >>= runUI . instantiate
-  case ret of
-    Left err -> putStrLn $  "Error: " ++ show err
-    Right _ -> return ()
+  ref <- newIORef component
+  let ?ref = ref
+  bracket_
+    (Tb2.runTermbox2 setup)
+    (Tb2.runTermbox2 dispose)
+    (Tb2.runTermbox2 loop)
 
--- | A Day convolution can combine two comonad behaviors into one.
-data And f g a = forall x y. And (x -> y -> a) (f x) (g y)
-
-(<->) :: f x -> g y -> And f g (x, y)
-(<->) = UI.And (,)
-
-instance Functor (And f g) where
-  fmap g (And f x y) = And (\a b -> let fab = f a b in g fab) x y
-  {-# INLINE fmap #-}
-
-instance (Comonad f, Comonad g) => Comonad (And f g) where
-  extract (And f x y) = f (extract x) (extract y)
-  {-# INLINE extract #-}
-  duplicate (And f x y) =
-    let xx = duplicate x
-        yy = duplicate y
-    in And (And f) xx yy
-  {-# INLINE duplicate #-}
-
-instance (ComonadApply f, ComonadApply g) => ComonadApply (And f g) where
-  And u fa fb <@> And v gc gd =
-    And
-      (\(a,c) (b, d) -> u a b (v c d))
-      ((,) <$> fa <@> gc)
-      ((,) <$> fb <@> gd)
-
-instance (Representable f, Representable g) => Distributive (And f g) where
-  distribute f = And fn (tabulate id) (tabulate id) where
-    fn x y = fmap (\(And o m n) -> o (index m x) (index n y)) f
-  {-# INLINE distribute #-}
-
-  collect g f = And fn (tabulate id) (tabulate id) where
-    fn x y = fmap (\q -> case g q of And o m n  -> o (index m x) (index n y)) f
-  {-# INLINE collect #-}
-
-instance (Representable f, Representable g) => Representable (And f g) where
-  type Rep (And f g) = (Rep f, Rep g)
-  tabulate f = And (curry f) (tabulate id) (tabulate id)
-  {-# INLINE tabulate #-}
-  index (And o m n ) (x,y) = o (index m x) (index n y)
-  {-# INLINE index #-}
-
--- = Part 3: Drawing utilities.
+-- Part 3: Drawing utilities.
 
 glyphCode :: Integral n => Char -> n
 glyphCode = fromIntegral . ord
@@ -259,8 +227,3 @@ width, height :: UI Int
 width = UI Tb2.width
 height = UI Tb2.height
 
-fix :: (t -> t) -> t
-fix f = let x = f x in x
-
-kfixF :: (ComonadApply w, Functor f) => w (f (w (f a) -> a)) -> w (f a)
-kfixF fs = fix $ (<@> fs) . fmap (fmap . flip ($)) . duplicate

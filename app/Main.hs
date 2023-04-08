@@ -1,90 +1,75 @@
-
-{-# LANGUAGE DeriveFunctor, TypeOperators, BangPatterns, TypeFamilies #-}
-{-# LANGUAGE StrictData #-}
-
+{-# LANGUAGE FlexibleContexts, BangPatterns #-}
 module Main (main) where
 
-import System.Environment (getArgs)
-import Control.Monad (forM_, when)
 import Control.Comonad (Comonad(..), (=>>))
-import qualified Control.Comonad.Representable.Store as R
-import Control.Comonad.Store (Store, store, runStore)
-import Data.Distributive (Distributive(..))
-import Data.Functor.Rep (Representable(..), distributeRep)
-import qualified Data.Sequence as S
-import Termbox2 (Tb2Event(_ch, _type, _w, _h),eventResize)
-import Conway (Cell(X), Cell(O))
-import qualified Conway as C
-import UI
-  ( UI
-  , (<->)
-  , Action(..)
-  , unwrap
-  , nil
-  , BehaviorOf
-  , behavior
-  , And(..)
-  , screen
-  , Screen
-  )
+import Control.Comonad.Store (StoreT(..), runStoreT)
+import Control.Monad (forM, forM_, when)
+import System.Environment (getArgs)
 import qualified UI
+import qualified Termbox2 as Tb2
+import Sheet ((&))
+import qualified Sheet as S
+import Conway (Grid, mkGrid, unGrid, Coord, fromPair, Rule, basicRule, start)
 
--- Contrived custom behavior example: our app will keep track of the number of
--- times it renders.
---
--- | Defines the /behavior/ (legal operations) supported by the component.
--- In this case, we only define a '_tick' behavior to increment the count by 1.
-newtype CounterApi k = Counter { _tick :: k } deriving (Functor)
-type Counter = BehaviorOf CounterApi
--- | Concrete implementation of the 'CounterApi'.
-counter :: Int -> Counter Int
-counter = behavior $ \n -> Counter (n+1)
+--------------------------------------------------------------------------------
+-- Conway game!
+--------------------------------------------------------------------------------
 
--- | Our application combines the behaviors of a stream and a 'Counter'.
-type App = C.Stream `And` Counter
+type App = UI.Store (Grid Bool)
 
--- | A terminal UI component ('Screen') with behavior defined by 'App'.
--- Renders the steps of a Game of Life evaluation; displays step count.
-app :: [[C.Cell]] -> Screen App IO
-app start = screen (C.animate start <-> counter 1) render update where
+game :: [Coord] -> UI.Activity App IO
+game = UI.store render . mkGrid where
 
-  render :: (C.Pattern, Int) -> UI ()
-  render (pattern, stepNumber) = do
-    w <- UI.width
-    h <- UI.height
-    let rows = C.sheetView (h-2) (w-2) pattern
-    forM_ (zip [1..] rows) $ \(y, row) ->
-      forM_ (zip [1..] row) $ \(x, cell) ->
-        when (cell == X) $ UI.drawBlock x y
-    UI.screenBorder 0
-    UI.statusText $ "Step: " ++ show stepNumber
+  render :: Grid Bool -> UI.Interface IO (UI.Action App) UI.Console
+  render this send = UI.Console (send . update) $ do
+    !w <- UI.width
+    !h <- UI.height
+    let !rows = S.take (S.belowBy h & S.rightBy w) $ unGrid this
+    forM_ (zip [1..] rows) $ \(row, cols) ->
+      forM_ (zip [1..] cols) $ \(col, isAlive) ->
+        when isAlive $ UI.drawBlock row col
 
-  update :: Tb2Event -> IO (Action App ())
-  update et = return $!
-    if _ch et == UI.glyphCode ' '
-      then do
-        tick
-        nextStep
-      else nil
+  update :: UI.Event -> UI.Action App IO ()
+  update (UI.Event evt)
+    | Tb2._type evt == Tb2.eventKey =
+      when (Tb2._ch evt == UI.glyphCode ' ') $ UI.modify (extend basicRule)
+    | otherwise = return ()
 
-  nextStep, tick :: Action App ()
-  nextStep = Action $ \(And f s c) -> extract (And f (C.tail s) c) ()
-  tick = Action $ \(And f s c) -> extract (And f s (_tick (unwrap c))) ()
+--------------------------------------------------------------------------------
+-- Wrap another component with some runtime stats.
+--------------------------------------------------------------------------------
+
+withBorder
+  :: Comonad space
+  => UI.Activity space effect
+  -> UI.Activity (StoreT () space) effect
+withBorder inner = StoreT (inner =>> render) () where
+
+  render child () send  =
+    let ~(UI.Console uC rC) = extract child $ send . UI.hoist adapt
+    in  UI.Console uC $ rC >> UI.screenBorder 0
+
+  adapt wrapped = let (idx, k) = runStoreT wrapped in ($ k) <$> idx
+  {-# INLINE adapt #-}
+
+--------------------------------------------------------------------------------
+-- Main
+--------------------------------------------------------------------------------
 
 -- | Load a 'C.Pattern' from a given file path (or exit gracelessly).
-patternFromFile :: String -> IO [[C.Cell]]
+patternFromFile :: FilePath -> IO [Coord]
 patternFromFile path = do
   contents <- readFile path
-  return $ fmap (fmap xform) (lines contents)
-  where
-    xform cl | cl == 'X' = X
-             | cl == 'O' = O
-             | otherwise = error "invalid pattern file."
+  coords <- forM (zip (lines contents) [0..]) $ \(row, rowNum) ->
+    forM (zip row [0..]) $ \(char, colNum) -> case char of
+      'X' -> return [(colNum, rowNum)]
+      _   -> return []
+  return $ fromPair <$> concat (concat coords)
+
 
 main :: IO ()
 main = do
   args <- getArgs
-  when (null args) (error "please provide a pattern file.")
+  when (null args) $ error "Please provide pattern file."
   pattern <- patternFromFile (head args)
-  UI.mount (app pattern)
-
+  UI.mount $ withBorder $ game pattern
